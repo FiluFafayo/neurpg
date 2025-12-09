@@ -85,8 +85,11 @@ export class StructuredGenerator implements IMapGenerator {
         
         // Sort config rooms by priority/size heuristic
         const sortedRooms = [...config.rooms].sort((a, b) => {
-            const scoreA = this.getRoomScore(a.type);
-            const scoreB = this.getRoomScore(b.type);
+            // Fix: Paranoid check - AI might return rooms without 'type'
+            const typeA = a.type || 'empty';
+            const typeB = b.type || 'empty';
+            const scoreA = this.getRoomScore(typeA);
+            const scoreB = this.getRoomScore(typeB);
             return scoreB - scoreA;
         });
 
@@ -224,6 +227,9 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private getRoomScore(type: string): number {
+        // Fix: Guard clause against undefined types
+        if (!type) return 1;
+        
         const t = type.toLowerCase();
         if (t.includes('living') || t.includes('main') || t.includes('hall')) return 10;
         if (t.includes('bed') || t.includes('kitchen') || t.includes('dining')) return 5;

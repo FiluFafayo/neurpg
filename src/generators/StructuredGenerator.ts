@@ -149,12 +149,29 @@ export class StructuredGenerator implements IMapGenerator {
             });
         });
 
-        // 6. Generate Walls
-        // Iterate grid, if tile is 1 and neighbor is 0, it's a wall.
+        // 6. Generate Walls (Phase 2 Smart Logic)
         for (let y = 0; y < config.height; y++) {
             for (let x = 0; x < config.width; x++) {
                 if (grid[y][x] === 1) { // Potential Wall
-                    if (this.hasFloorNeighbor(grid, x, y)) {
+                    // A wall exists if it borders a floor (0)
+                    // We scan neighbors to see if any is 0.
+                    let isEdge = false;
+                    const neighbors = [[0,1], [0,-1], [1,0], [-1,0]];
+                    for (const [dx, dy] of neighbors) {
+                        const nx = x + dx; 
+                        const ny = y + dy;
+                        if (nx >= 0 && nx < config.width && ny >= 0 && ny < config.height) {
+                            if (grid[ny][nx] === 0) {
+                                isEdge = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (isEdge) {
+                        // In future, we can map `mask` to specific sprites
+                        // const mask = this.calculateBitmask(grid, x, y);
+                        // For now, we stick to the single atlas constraint but place it firmly.
                         mapData.tiles.push({
                             x, y,
                             sprite: 'wall_brick',
@@ -214,55 +231,66 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private createCorridor(c1: Container, c2: Container, grid: number[][], mapData: MapData) {
-        // Draw L-shaped path between centers
+        // Draw L-shaped path between centers with 2-TILE WIDTH
         let x = c1.center.x;
         let y = c1.center.y;
         const targetX = c2.center.x;
         const targetY = c2.center.y;
+        
+        // Config: Width of corridors/doors
+        const corridorWidth = 2; 
+
+        // Helper to carve a brush
+        const dig = (px: number, py: number) => {
+            for (let dy = 0; dy < corridorWidth; dy++) {
+                for (let dx = 0; dx < corridorWidth; dx++) {
+                    this.carveTunnel(px + dx, py + dy, grid, mapData);
+                }
+            }
+        };
 
         while (x !== targetX) {
             x += (x < targetX) ? 1 : -1;
-            this.carveTunnel(x, y, grid, mapData);
+            dig(x, y);
         }
         while (y !== targetY) {
             y += (y < targetY) ? 1 : -1;
-            this.carveTunnel(x, y, grid, mapData);
+            dig(x, y);
         }
     }
 
     private carveTunnel(x: number, y: number, grid: number[][], mapData: MapData) {
-        // Ensure bounds
         if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
-            // If it's already floor, ignore
-            // If it's wall, make it floor (door/corridor)
-            if (grid[y][x] === 1) {
-                grid[y][x] = 0;
-                // Add floor tile
+            if (grid[y][x] === 1) { // Was Wall
+                grid[y][x] = 0; // Become Floor
                 mapData.tiles.push({
                     x, y,
-                    sprite: 'floor_common',
+                    sprite: 'floor_common', // AssetMapper will handle texture
                     layer: 'floor'
                 });
-                
-                // If this point was a wall, it becomes a "Door" conceptually
-                // We can add a door frame logic later, or just open floor for now.
-                // To adhere to "2-tile wide door" request:
-                // We could carve neighbors too.
-                // Let's carve width 2 for corridors?
-                // For simplicity Phase 0: 1 tile wide path is enough to prove structure connectivity.
             }
         }
     }
 
-    private hasFloorNeighbor(grid: number[][], x: number, y: number): boolean {
-        const neighbors = [[0,1], [0,-1], [1,0], [-1,0]];
-        for (const [dx, dy] of neighbors) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (ny >= 0 && ny < grid.length && nx >= 0 && nx < grid[0].length) {
-                if (grid[ny][nx] === 0) return true;
-            }
-        }
-        return false;
+    // --- PHASE 2: Smart Wall Logic ---
+    private calculateBitmask(grid: number[][], x: number, y: number): number {
+        // NESW bitmasking (North=1, East=2, South=4, West=8)
+        // Checks if neighbor is a WALL (1) or BOUNDARY
+        // If neighbor is FLOOR (0), it is "open"
+        
+        let mask = 0;
+        const h = grid.length;
+        const w = grid[0].length;
+
+        // North
+        if (y > 0 && grid[y-1][x] === 1) mask += 1;
+        // East
+        if (x < w-1 && grid[y][x+1] === 1) mask += 2;
+        // South
+        if (y < h-1 && grid[y+1][x] === 1) mask += 4;
+        // West
+        if (x > 0 && grid[y][x-1] === 1) mask += 8;
+
+        return mask;
     }
 }

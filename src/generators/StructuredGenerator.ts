@@ -188,8 +188,15 @@ export class StructuredGenerator implements IMapGenerator {
         // 7. Place Furniture
         mapData.rooms.forEach(room => {
             const roomConfig = config.rooms.find(c => c.id === room.id);
-            let items = roomConfig ? [...roomConfig.furniture] : [];
-            if (items.length === 0) items = ['table', 'chair']; // Fallback
+            
+            // Fix: Paranoid check - Ensure furniture exists AND is actually an array before spreading
+            let items: string[] = [];
+            if (roomConfig && Array.isArray(roomConfig.furniture)) {
+                items = [...roomConfig.furniture];
+            }
+            
+            // Fallback default items if empty or malformed
+            if (items.length === 0) items = ['table', 'chair'];
             
             ConstraintSolver.placeItems(room, items, mapData, grid, 0);
         });

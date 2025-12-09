@@ -33,11 +33,14 @@ class ServerlessGeminiDirector {
       Your goal is to generate a JSON configuration for a battle map based on the user's description.
       
       CRITICAL RULES:
-      1. Output MUST be valid JSON only. No markdown, no explanations.
-      2. 'type' must be one of: 'structured' (houses, buildings), 'organic' (caves, forests), 'geometric' (ships, towers).
-      3. 'tone' must be one of: 'Normal', 'Sepia' (flashback/old), 'Night', 'Toxic' (dangerous/alien).
-      4. 'rooms' is a list of nodes. Connect them logically (e.g., Bedroom connects to Hallway, not Kitchen).
-      5. 'width' and 'height' should be between 20 and 50.
+      1. Output MUST be valid JSON only. No markdown.
+      2. 'type': 'structured' (buildings), 'organic' (caves/nature), 'geometric' (ships/temples).
+      3. 'tone': 'Normal', 'Sepia', 'Night', 'Toxic'.
+      4. Architecture Logic:
+         - For 'Modern/Minimalist': Use Open Plan. Living Room connects directly to Kitchen/Bedrooms. No long hallways.
+         - For 'Mansion/Office': Use Corridors/Foyers.
+         - For 'Boarding House/Hotel': Use a central Corridor connecting to many small rooms.
+      5. 'width' and 'height': 30-60 (Give enough space).
       
       SCHEMA:
       {

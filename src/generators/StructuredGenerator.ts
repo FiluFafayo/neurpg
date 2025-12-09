@@ -55,21 +55,21 @@ export class StructuredGenerator implements IMapGenerator {
 
         // 2. Tentukan Ukuran Ruangan (Dimensi Dinamis)
         const roomRects: Rect[] = config.rooms.map(room => {
-            // Pass map dimensions here!
-            const dim = this.getRoomDimensions(room.type, room.name, config.width, config.height);
+            const connCount = room.connections ? room.connections.length : 0;
+            const dim = this.getRoomDimensions(room.type, room.name, config.width, config.height, connCount);
             return new Rect(0, 0, dim.w, dim.h, room);
         });
 
-        // 3. Start Node Selection (Hub)
-        // Sort rooms by importance to be placed earlier
+        // 3. Start Node Selection (Connectivity is King)
+        // The room with the most connections is the Hub, regardless of its name.
         const priorityScore = (r: Rect) => {
-            const t = r.room.type.toLowerCase();
-            const n = r.room.name.toLowerCase();
-            if (t.includes('living') || t.includes('common')) return 10; // Central Hub
-            if (t.includes('hall') || t.includes('corridor')) return 8;  // Arteries
-            if (t.includes('kitchen') || t.includes('dining')) return 5;
-            if (t.includes('entrance')) return 4;
-            return 1;
+            const connectionCount = r.room.connections.length;
+            
+            // Boost entrance slightly so it's not buried deep inside
+            const isEntrance = r.room.type.includes('entrance') || r.room.name.toLowerCase().includes('foyer');
+            
+            // Formula: Connectivity * 10 + (Entrance Bonus)
+            return (connectionCount * 10) + (isEntrance ? 5 : 0);
         };
         
         roomRects.sort((a, b) => priorityScore(b) - priorityScore(a));
@@ -286,14 +286,41 @@ export class StructuredGenerator implements IMapGenerator {
 
     // --- Config & Helpers ---
 
-    // Ubah signature untuk menerima dimensi Map
-    private getRoomDimensions(type: string, name: string, mapW: number, mapH: number): { w: number, h: number } {
+    // Helper to find connections count (quick & dirty fix passing connections count)
+    private getRoomDimensions(type: string, name: string, mapW: number, mapH: number, connectionsCount: number = 2): { w: number, h: number } {
         const t = type.toLowerCase();
-        const n = name.toLowerCase();
         
-        // Helper: Persentase minimal dari map (biar proporsional)
-        // Kita pakai Math.min(mapW, mapH) sebagai acuan skala
-        const scale = Math.min(mapW, mapH);
+        // Base Unit
+        const U = 2; // 1 meter = 2 tiles
+
+        if (t.includes('hall') || t.includes('corridor')) {
+             // Panjang lorong menyesuaikan jumlah koneksi. 
+             // Minimal 10 tile, Maksimal 80% map.
+             let length = Math.max(10, connectionsCount * 4);
+             if (length > mapW - 4) length = mapW - 6;
+             return { w: length, h: 2 * U }; 
+        }
+        if (t.includes('living') || t.includes('common')) {
+             return { w: 12, h: 10 }; // 6m x 5m
+        }
+        if (t.includes('master')) {
+             return { w: 10, h: 8 }; // 5m x 4m
+        }
+        if (t.includes('kitchen') || t.includes('dining')) {
+             return { w: 8, h: 8 }; // 4m x 4m
+        }
+        if (t.includes('bed')) { // Standard bedroom (Boarding House)
+             return { w: 6, h: 6 }; // 3m x 3m
+        }
+        if (t.includes('bath') || t.includes('wc')) {
+             return { w: 4, h: 4 }; // 2m x 2m
+        }
+        if (t.includes('garage')) {
+             return { w: 10, h: 12 };
+        }
+        
+        return { w: 6, h: 6 }; 
+    }
         
         // Base sizes (in tiles) scaled by map size
         // Function to ensure even numbers (for centering logic)
@@ -305,8 +332,12 @@ export class StructuredGenerator implements IMapGenerator {
         };
 
         if (t.includes('hall') || t.includes('corridor')) {
-            // Koridor: Panjang ikut map, lebar fix kecil
-            return { w: Math.floor(scale * 0.4), h: 4 }; // 40% panjang, lebar 4 (2 meter)
+            // Dynamic Hallway: 
+            // If it connects to MANY rooms (like a Boarding House), it needs to be LONG.
+            // If simple house, keep it moderate.
+            const connCount = (this.getConfig(config, n) || []).length;
+            const len = Math.max(8, Math.min(Math.floor(scale * 0.6), connCount * 4)); 
+            return { w: len, h: 4 }; // Lebar 4 (2 meter), Panjang dinamis
         }
         if (t.includes('living') || t.includes('common') || t.includes('lounge')) {
             // Ruang utama: Besar (25-30% map)

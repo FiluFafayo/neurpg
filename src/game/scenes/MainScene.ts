@@ -98,6 +98,9 @@ export class MainScene extends Phaser.Scene {
 
     // Listen for Tone Events
     window.addEventListener('PHASER_SET_TONE', ((e: CustomEvent) => {
+        // Guard Clause: Don't run if scene is dead
+        if (!this.sys || !this.sys.isActive() || !this.cameras || !this.cameras.main) return;
+
         const tone = e.detail;
         this.cameras.main.resetPostPipeline();
         if (tone === 'Sepia') this.cameras.main.setPostPipeline('SepiaPipeline');
@@ -107,6 +110,8 @@ export class MainScene extends Phaser.Scene {
 
     // Listen for Map Draw Events
     window.addEventListener('PHASER_DRAW_MAP', ((e: CustomEvent) => {
+        if (!this.sys || !this.sys.isActive()) return;
+        
         const mapData = e.detail as MapData;
         this.renderMap(mapData);
     }) as EventListener);

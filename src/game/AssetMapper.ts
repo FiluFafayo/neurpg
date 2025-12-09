@@ -30,6 +30,12 @@ export class AssetMapper {
         if (k.includes('floor_hallway') || k.includes('floor_corridor')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x888888 }; // Dark Grey
         if (k.includes('floor_storage') || k.includes('floor_pantry')) return { texture: atlasKey, frame: 'floor_wood', tint: 0x8B4513 }; // Dark Brown
         
+        // --- Fase 1: Fix Missing Keys ---
+        if (k.includes('floor_exterior') || k.includes('carport') || k.includes('terrace')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x999999 }; // Pavement Grey
+        if (k.includes('floor_entrance') || k.includes('foyer')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xccaa88 }; // Welcoming Wood
+        if (k.includes('floor_common') || k.includes('living')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xffeebb }; // Cozy Warm
+        if (k.includes('floor_utility') || k.includes('laundry')) return { texture: atlasKey, frame: 'floor_stone', tint: 0xcccccc }; // Cool Stone
+
         // Generic Floors
         if (k.includes('floor_wood') || k.includes('wood_floor')) return { texture: atlasKey, frame: 'floor_wood' };
         if (k.includes('floor_stone') || k.includes('stone_floor')) return { texture: atlasKey, frame: 'floor_stone' };

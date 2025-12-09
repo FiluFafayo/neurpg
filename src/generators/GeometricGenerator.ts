@@ -85,8 +85,10 @@ export class GeometricGenerator implements IMapGenerator {
         }
 
         // Place remaining rooms in mirrored pairs
-        let currentY = cy - ry + 4; // Start near top
-        const xOffset = 10;
+        // Start from top, but ensure we don't overlap the center room if it's wide/tall
+        // For simplicity, we'll place them in columns on left/right
+        let currentY = 4; 
+        const xOffset = 12; // Increased offset to clear the center room
         
         while (roomsToPlace.length > 0) {
             const leftRoom = roomsToPlace.shift();
@@ -107,7 +109,7 @@ export class GeometricGenerator implements IMapGenerator {
                 type: leftRoom.type
             });
 
-            // Mirror (Right Side)
+            // Mirror (Right Side) - ONLY for secondary rooms
             const rx_pos = cx + xOffset;
             mapData.rooms.push({
                 id: `${leftRoom.id}_mirror`,

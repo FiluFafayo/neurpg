@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { AssetLoader } from '../AssetLoader';
+import { AssetMapper } from '../AssetMapper';
 
 import { MapData } from '../../types/MapData';
 
@@ -54,16 +55,9 @@ export class MainScene extends Phaser.Scene {
     // Touch Controls
     this.input.on('pointermove', this.handleTouchMove, this);
     this.input.on('pointerup', this.handleTap, this);
-    
-    // Mouse Wheel Zoom
-    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _gameObjects: any, _deltaX: number, deltaY: number, _deltaZ: number) => {
-        const zoom = this.cameras.main.zoom;
-        const newZoom = deltaY > 0 ? zoom * 0.9 : zoom * 1.1;
-        this.cameras.main.setZoom(Phaser.Math.Clamp(newZoom, 0.5, 4.0));
-    });
 
     // Instructions
-    this.add.text(16, 60, 'Controls:\nArrows/Drag to Pan\nQ/E/Wheel to Zoom\n[D] Debug Info', {
+    this.add.text(16, 60, 'Controls:\nArrows/Drag to Pan\nQ/E/Pinch to Zoom\n[D] Debug Info', {
         fontSize: '14px',
         color: '#aaaaaa'
     });
@@ -171,10 +165,10 @@ export class MainScene extends Phaser.Scene {
       return `${mb.toFixed(2)} MB`;
   }
 
-  private handleTouchMove(pointer: Phaser.Input.Pointer) {
-    // 1. Dual Touch (Pinch/Pan)
+  private handleTouchMove(_pointer: Phaser.Input.Pointer) {
+    // Check for 2 fingers
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
-        // ... (Existing Dual Touch Logic) ...
+        // 1. Pinch Zoom
         const dist = Phaser.Math.Distance.Between(
             this.input.pointer1.x, this.input.pointer1.y,
             this.input.pointer2.x, this.input.pointer2.y
@@ -189,12 +183,14 @@ export class MainScene extends Phaser.Scene {
             this.cameras.main.setZoom(Phaser.Math.Clamp(this.pinchState.initialZoom * scale, 0.5, 4.0));
         }
 
+        // 2. Two-Finger Pan
         const midX = (this.input.pointer1.x + this.input.pointer2.x) / 2;
         const midY = (this.input.pointer1.y + this.input.pointer2.y) / 2;
 
         if (this.panState.active) {
             const dx = midX - this.panState.lastX;
             const dy = midY - this.panState.lastY;
+            // Scroll moves opposite to drag
             this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
             this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
         }
@@ -203,21 +199,7 @@ export class MainScene extends Phaser.Scene {
         this.panState.lastX = midX;
         this.panState.lastY = midY;
 
-    } 
-    // 2. Single Pointer (Mouse/Touch Drag)
-    else if (pointer.isDown) {
-        if (this.panState.active) {
-            const dx = pointer.x - this.panState.lastX;
-            const dy = pointer.y - this.panState.lastY;
-            this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
-            this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
-        }
-        
-        this.panState.active = true;
-        this.panState.lastX = pointer.x;
-        this.panState.lastY = pointer.y;
-    }
-    else {
+    } else {
         // Reset states if fingers lifted
         this.pinchState.active = false;
         this.panState.active = false;
@@ -282,21 +264,30 @@ export class MainScene extends Phaser.Scene {
 
       // Render Tiles
       mapData.tiles.forEach(tile => {
+          // Resolve Asset Mapping (Semantic Key -> Texture/Frame/Tint)
+          const assetConfig = AssetMapper.getSpriteConfig(tile.sprite);
+
           if (tile.layer === 'floor') {
               // OPTIMIZATION: Use Blitter for static floor
-              this.floorBlitter.create(
+              const bob = this.floorBlitter.create(
                   tile.x * TILE_SIZE + TILE_SIZE/2, 
                   tile.y * TILE_SIZE + TILE_SIZE/2, 
-                  tile.sprite
+                  assetConfig.frame
               );
+              if (assetConfig.tint) {
+                  bob.setTint(assetConfig.tint);
+              }
           } else {
               // Use Sprites for sortable items (Walls, Furniture)
               const sprite = this.assetLoader.createSprite(
                   tile.x * TILE_SIZE + TILE_SIZE/2, 
                   tile.y * TILE_SIZE + TILE_SIZE/2, 
-                  tile.sprite
+                  assetConfig.frame
               );
               sprite.setData('layer', tile.layer);
+              if (assetConfig.tint) {
+                  sprite.setTint(assetConfig.tint);
+              }
               this.mapContainer.add(sprite);
           }
       });

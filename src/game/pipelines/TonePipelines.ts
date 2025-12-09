@@ -20,9 +20,14 @@ varying vec2 outTexCoord;
 
 void main(void) {
     vec4 color = texture2D(uMainSampler, outTexCoord);
-    // Blue tint + darken
-    vec3 night = vec3(color.r * 0.4, color.g * 0.4, color.b * 1.0);
-    gl_FragColor = vec4(night * 0.7, color.a);
+    // Deep Blue tint + high contrast + darken
+    // Reduce Red/Green significantly, boost Blue
+    vec3 night = vec3(color.r * 0.1, color.g * 0.2, color.b * 1.5);
+    
+    // Vignette-like darkness (simple multiplier)
+    float brightness = 0.5;
+    
+    gl_FragColor = vec4(night * brightness, color.a);
 }
 `;
 
@@ -33,8 +38,13 @@ varying vec2 outTexCoord;
 
 void main(void) {
     vec4 color = texture2D(uMainSampler, outTexCoord);
-    // Green tint + high contrast
-    vec3 toxic = vec3(color.r * 0.2, color.g * 1.5, color.b * 0.2);
+    // Nuclear Green tint + high saturation
+    // Crush Blue/Red, explode Green
+    vec3 toxic = vec3(color.r * 0.0, color.g * 2.0, color.b * 0.0);
+    
+    // Add a sickly yellow tint to highlights
+    if (color.r > 0.5) toxic.r += 0.5;
+    
     gl_FragColor = vec4(toxic, color.a);
 }
 `;

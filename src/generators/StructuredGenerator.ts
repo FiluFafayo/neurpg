@@ -3,30 +3,35 @@ import { MapData } from '../types/MapData';
 import { IMapGenerator } from './MapGenerators';
 import { ConstraintSolver } from './ConstraintSolver';
 
-// Tipe Zona yang lebih kaku
-type ZoneType = 'service' | 'public' | 'private' | 'exterior';
+// Rectangle helper untuk collision detection
+class Rect {
+    constructor(public x: number, public y: number, public w: number, public h: number, public room: RoomConfig) {}
 
-// Container dengan linkage parent-child untuk partitioning
-class Container {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    room: RoomConfig | null = null;
-    type: ZoneType | null = null; // Label zona untuk debugging
+    get left() { return this.x; }
+    get right() { return this.x + this.w; }
+    get top() { return this.y; }
+    get bottom() { return this.y + this.h; }
 
-    constructor(x: number, y: number, w: number, h: number) {
-        this.x = x;
-        this.y = y;
-        this.width = w;
-        this.height = h;
-    }
+    // Overlap test (memperbolehkan overlap 1 pixel untuk shared wall)
+    overlaps(other: Rect): boolean {
+        // Kita kurangi 1 pixel dari size saat cek overlap agar dinding bisa sharing
+        // Area Floor efektif: x+1 hingga x+w-1
+        const thisInnerL = this.x + 1;
+        const thisInnerR = this.x + this.w - 1;
+        const thisInnerT = this.y + 1;
+        const thisInnerB = this.y + this.h - 1;
 
-    get center() {
-        return {
-            x: Math.floor(this.x + this.width / 2),
-            y: Math.floor(this.y + this.height / 2)
-        };
+        const otherInnerL = other.x + 1;
+        const otherInnerR = other.x + other.w - 1;
+        const otherInnerT = other.y + 1;
+        const otherInnerB = other.y + other.h - 1;
+
+        return (
+            thisInnerL < otherInnerR &&
+            thisInnerR > otherInnerL &&
+            thisInnerT < otherInnerB &&
+            thisInnerB > otherInnerT
+        );
     }
 }
 
@@ -34,10 +39,9 @@ export class StructuredGenerator implements IMapGenerator {
     
     private readonly WALL = 1;
     private readonly FLOOR = 0;
-    private readonly MIN_ROOM_DIM = 4; // Minimal lebar ruangan (tiles)
 
     generate(config: MapConfig): MapData {
-        console.log(`[StructuredGenerator] Starting Phase 3.5: Dictator Architect...`);
+        console.log(`[StructuredGenerator] Starting Phase 4: Graph Growth (No BSP)...`);
         
         const mapData: MapData = {
             width: config.width,
@@ -46,64 +50,105 @@ export class StructuredGenerator implements IMapGenerator {
             rooms: []
         };
 
-        // 1. Init Grid (Full Wall)
+        // 1. Setup Grid
         const grid: number[][] = Array(config.height).fill(0).map(() => Array(config.width).fill(this.WALL));
 
-        // 2. Klasifikasi Ruangan (Zoning)
-        const zones = this.classifyRooms(config.rooms);
+        // 2. Tentukan Ukuran Ruangan (Dimensi Baku)
+        // Kita tentukan ukuran di awal biar placement gampang
+        const roomRects: Rect[] = config.rooms.map(room => {
+            const dim = this.getRoomDimensions(room.type, room.name);
+            return new Rect(0, 0, dim.w, dim.h, room);
+        });
 
-        // 3. Alokasi Lahan (Dictator Partitioning)
-        // Kita bagi peta menjadi 3-4 Zona Besar (Container) berdasarkan Template
-        const zoneContainers = this.allocateLand(config.width, config.height, config.description);
+        // 3. Start Node Selection (Hub)
+        // Cari Entrance / Foyer / Hallway utama
+        let startNode = roomRects.find(r => r.room.type.includes('entrance') || r.room.name.toLowerCase().includes('foyer'));
+        if (!startNode) startNode = roomRects.find(r => r.room.type.includes('living') || r.room.type.includes('common'));
+        if (!startNode) startNode = roomRects[0];
 
-        // 4. Masukkan Ruangan ke Zona (Filling)
-        // Service Rooms -> Service Container, dst.
-        const allLeaves: Container[] = [];
-
-        // Proses setiap zona
-        this.processZone(zoneContainers.service, zones.service, allLeaves);
-        this.processZone(zoneContainers.public, zones.public, allLeaves);
-        this.processZone(zoneContainers.private, zones.private, allLeaves);
+        // 4. Place First Room in Center
+        startNode.x = Math.floor((config.width - startNode.w) / 2);
+        startNode.y = Math.floor((config.height - startNode.h) / 2);
         
-        // Zona Exterior (Garasi) diproses khusus (biasanya tidak di-split, cuma ditempel)
-        if (zones.exterior.length > 0 && zoneContainers.exterior) {
-            // Exterior biasanya carport, biarkan utuh atau split minimal
-            this.processZone(zoneContainers.exterior, zones.exterior, allLeaves);
+        // Pindahkan startNode sedikit ke bawah jika dia Entrance (biar dekat pintu masuk map)
+        if (startNode.room.type === 'entrance') {
+            startNode.y = Math.floor(config.height * 0.7); 
         }
 
-        // 5. Render Lantai (Anti-Double Wall Logic)
-        allLeaves.forEach(leaf => {
-            if (!leaf.room) return;
+        const placedRooms: Rect[] = [startNode];
+        const queue: Rect[] = [startNode];
+        const placedIds = new Set<string>([startNode.room.id]);
 
-            // Logika Tembok Sharing:
-            // Container x=0, w=10 (Area 0-10).
-            // Container x=10, w=10 (Area 10-20).
-            // Garis 10 adalah perbatasan.
-            // Lantai A: 1..9. Lantai B: 11..19.
-            // Dinding di 0, 10, 20.
-            // Jadi offset lantai adalah x+1 sampai x+w-1.
+        // 5. Growth Loop (BFS)
+        while (queue.length > 0) {
+            const parent = queue.shift()!;
             
-            const startX = leaf.x + 1;
-            const startY = leaf.y + 1;
-            const endX = leaf.x + leaf.width - 1; // Eksklusif dinding kanan
-            const endY = leaf.y + leaf.height - 1; // Eksklusif dinding bawah
+            // Cari tetangga yang belum ditempatkan
+            const neighborIds = parent.room.connections || [];
+            
+            for (const nbId of neighborIds) {
+                if (placedIds.has(nbId)) continue;
 
-            // Register Room
+                const child = roomRects.find(r => r.room.id === nbId);
+                if (!child) continue;
+
+                // Coba tempelkan child ke parent (4 Sisi)
+                const success = this.trySnapRoom(parent, child, placedRooms, config.width, config.height);
+                
+                if (success) {
+                    placedRooms.push(child);
+                    queue.push(child);
+                    placedIds.add(child.room.id);
+                } else {
+                    console.warn(`[Architect] Could not fit room ${child.room.name} connected to ${parent.room.name}`);
+                    // Fallback: Taruh di queue lagi buat diproses sama parent lain? 
+                    // Atau force place di lokasi random terdekat?
+                    // Untuk sekarang kita skip biar ga crash/overlap parah.
+                }
+            }
+        }
+
+        // Handle Unplaced Rooms (Disconnected components)
+        const unplaced = roomRects.filter(r => !placedIds.has(r.room.id));
+        // Simple logic: Tempelkan mereka ke ruangan terakhir yang ditaruh (Growth liar)
+        unplaced.forEach(child => {
+            for (const parent of placedRooms) {
+                if (this.trySnapRoom(parent, child, placedRooms, config.width, config.height)) {
+                    placedRooms.push(child);
+                    placedIds.add(child.room.id);
+                    break;
+                }
+            }
+        });
+
+        // 6. Rasterize (Render ke Grid)
+        placedRooms.forEach(r => {
+            // Register
             mapData.rooms.push({
-                id: leaf.room.id,
-                name: leaf.room.name,
-                type: leaf.room.type,
-                x: startX, y: startY, width: endX - startX, height: endY - startY
+                id: r.room.id,
+                name: r.room.name,
+                type: r.room.type,
+                x: r.x + 1, // +1 karena x adalah dinding luar
+                y: r.y + 1,
+                width: r.w - 2, // -2 dinding
+                height: r.h - 2
             });
 
-            // Carve Floor
-            for (let y = startY; y < endY; y++) {
-                for (let x = startX; x < endX; x++) {
+            // Fill Floor
+            // Kita isi dari x+1 sampai x+w-1. 
+            // Dinding ada di x dan x+w-1.
+            // Shared wall logic: 
+            // Room A (0-10). Wall di 0 & 9. Floor 1-8.
+            // Room B (9-19). Wall di 9 & 18. Floor 10-17.
+            // Grid[9] adalah Wall milik A dan Wall milik B -> Tetap Wall.
+            
+            for (let y = r.y + 1; y < r.y + r.h - 1; y++) {
+                for (let x = r.x + 1; x < r.x + r.w - 1; x++) {
                     if (y >= 0 && y < config.height && x >= 0 && x < config.width) {
                         grid[y][x] = this.FLOOR;
                         mapData.tiles.push({
                             x, y,
-                            sprite: this.getFloorSprite(leaf.room.type),
+                            sprite: this.getFloorSprite(r.room.type),
                             layer: 'floor'
                         });
                     }
@@ -111,226 +156,131 @@ export class StructuredGenerator implements IMapGenerator {
             }
         });
 
-        // 6. Hubungkan Ruangan (Connectivity)
-        this.connectRooms(allLeaves, grid, mapData);
+        // 7. Generate Doors (Strictly on Connections)
+        this.generateDoors(placedRooms, grid, mapData);
 
-        // 7. Generate Dinding Fisik
+        // 8. Generate Walls Visuals
         this.generateWalls(grid, mapData);
 
-        // 8. Furnishing
+        // 9. Furnishing
         this.furnishRooms(mapData, config, grid);
 
         return mapData;
     }
 
-    // ==========================================
-    // DICTATOR LOGIC: ZONING & ALLOCATION
-    // ==========================================
+    // --- Core Placement Logic ---
 
-    private classifyRooms(rooms: RoomConfig[]) {
-        const buckets = {
-            service: [] as RoomConfig[],
-            public: [] as RoomConfig[],
-            private: [] as RoomConfig[],
-            exterior: [] as RoomConfig[]
-        };
+    private trySnapRoom(parent: Rect, child: Rect, allRooms: Rect[], mapW: number, mapH: number): boolean {
+        // Shuffle arah biar gak linear terus
+        const directions = ['top', 'bottom', 'left', 'right'].sort(() => Math.random() - 0.5);
 
-        rooms.forEach(r => {
-            const t = r.type.toLowerCase();
-            const n = r.name.toLowerCase();
-            
-            if (t.includes('garage') || t.includes('carport') || t.includes('garden') || n.includes('terrace')) {
-                buckets.exterior.push(r);
-            } else if (t.includes('kitchen') || t.includes('bath') && n.includes('shared') || t.includes('utility') || t.includes('laundry')) {
-                buckets.service.push(r);
-            } else if (t.includes('bed') || t.includes('bath') && n.includes('master') || t.includes('study')) {
-                buckets.private.push(r);
-            } else {
-                // Living, Dining, Foyer, Hall
-                buckets.public.push(r);
+        for (const dir of directions) {
+            // Set posisi child menempel parent
+            if (dir === 'top') {
+                child.x = parent.x + Math.floor((parent.w - child.w) / 2); // Center align
+                child.y = parent.y - child.h + 1; // +1 OVERLAP (Shared Wall)
+            } else if (dir === 'bottom') {
+                child.x = parent.x + Math.floor((parent.w - child.w) / 2);
+                child.y = parent.y + parent.h - 1; // -1 OVERLAP
+            } else if (dir === 'left') {
+                child.x = parent.x - child.w + 1; // +1 OVERLAP
+                child.y = parent.y + Math.floor((parent.h - child.h) / 2);
+            } else if (dir === 'right') {
+                child.x = parent.x + parent.w - 1; // -1 OVERLAP
+                child.y = parent.y + Math.floor((parent.h - child.h) / 2);
             }
-        });
 
-        return buckets;
-    }
+            // Validasi Bounds
+            if (child.x < 1 || child.y < 1 || child.right > mapW - 1 || child.bottom > mapH - 1) continue;
 
-    private allocateLand(mapW: number, mapH: number, desc: string) {
-        // Tentukan Template Layout berdasarkan deskripsi atau default
-        const d = desc.toLowerCase();
-        
-        // Kita pakai margin agar rumah ada di tengah
-        const margin = 2;
-        const buildW = mapW - (margin * 2);
-        const buildH = mapH - (margin * 2);
-        const x0 = margin;
-        const y0 = margin;
-
-        // Default: Layout Kotak Terbagi 3
-        // [ PRIVATE (Top) ]
-        // [ PUBLIC (Mid)  ]
-        // [ SERVICE (Bot) ]
-        
-        // Rasio Dektator
-        const hPrivate = Math.floor(buildH * 0.4);
-        const hPublic = Math.floor(buildH * 0.35);
-        const hService = buildH - hPrivate - hPublic;
-
-        const zones = {
-            private: new Container(x0, y0, buildW, hPrivate),
-            public: new Container(x0, y0 + hPrivate, buildW, hPublic),
-            service: new Container(x0, y0 + hPrivate + hPublic, buildW, hService),
-            exterior: null as Container | null
-        };
-        
-        zones.private.type = 'private';
-        zones.public.type = 'public';
-        zones.service.type = 'service';
-
-        // Override: L-Shape Layout (Jika diminta)
-        if (d.includes('l-shape') || d.includes('l shape')) {
-            // [ PRIVATE (Left) ] [      VOID      ]
-            // [ PRIVATE (Left) ] [ PUBLIC (Right) ]
-            // [ SERVICE (Left) ] [ PUBLIC (Right) ]
-            
-            const wLeft = Math.floor(buildW * 0.5);
-            const wRight = buildW - wLeft;
-            
-            // Private di sayap kiri penuh
-            zones.private = new Container(x0, y0, wLeft, Math.floor(buildH * 0.6));
-            // Service di bawah Private
-            zones.service = new Container(x0, y0 + zones.private.height, wLeft, buildH - zones.private.height);
-            // Public di sayap kanan bawah (L-Shape kaki)
-            zones.public = new Container(x0 + wLeft, y0 + Math.floor(buildH * 0.4), wRight, Math.floor(buildH * 0.6));
-        }
-
-        // Exterior (Garasi) logic: Tempel di sebelah Service atau Public (Bawah/Samping)
-        // Kita ambil "cuilan" dari Service atau bikin di luar border kalau muat
-        // Sederhananya: Ambil pojok kanan bawah Service Zone buat Garasi
-        const garageW = Math.floor(zones.service.width * 0.4);
-        const garageH = zones.service.height; // Full height of service strip
-        
-        // Potong service zone buat exterior
-        if (garageW > 4) {
-            zones.exterior = new Container(
-                zones.service.x + zones.service.width - garageW,
-                zones.service.y,
-                garageW,
-                garageH
-            );
-            // Shrink service zone
-            zones.service.width -= garageW;
-        }
-
-        return zones;
-    }
-
-    // ==========================================
-    // DICTATOR LOGIC: SUBDIVISION (BSP)
-    // ==========================================
-
-    private processZone(container: Container, rooms: RoomConfig[], allLeaves: Container[]) {
-        if (!container || rooms.length === 0) return;
-
-        // 1. Urutkan ruangan: Penting duluan (Master Bed > Kids Bed)
-        // Biar Master Bed dapat potongan pertama (biasanya lebih besar)
-        rooms.sort((a, b) => this.getRoomWeight(b.type) - this.getRoomWeight(a.type));
-
-        // 2. Recursive Split
-        const leaves: Container[] = [];
-        this.bspSplit(container, rooms.length, leaves);
-
-        // 3. Assign
-        // Pastikan jumlah leaf >= jumlah room. Kalau kurang, ada room yg gak kebagian (digabung).
-        rooms.forEach((room, i) => {
-            if (i < leaves.length) {
-                leaves[i].room = room;
-                allLeaves.push(leaves[i]);
-            } else {
-                console.warn(`[Architect] Room ${room.name} skipped (No Space)`);
-            }
-        });
-    }
-
-    private bspSplit(c: Container, targetCount: number, results: Container[]) {
-        // Basis rekursi: Jika target 1, atau container terlalu kecil
-        if (targetCount <= 1 || c.width < this.MIN_ROOM_DIM * 2 || c.height < this.MIN_ROOM_DIM * 2) {
-            results.push(c);
-            return;
-        }
-
-        // Tentukan arah potong
-        // Kalau lebar > tinggi, potong vertikal (biar jadi kotak)
-        let splitH = c.height > c.width;
-        
-        // Ratio check: Jangan bikin lorong tikus
-        if (c.width / c.height > 1.5) splitH = false; // Wide -> Vertical split
-        else if (c.height / c.width > 1.5) splitH = true; // Tall -> Horizontal split
-
-        // Tentukan titik potong (sekitar 40-60%)
-        const ratio = 0.4 + (Math.random() * 0.2);
-        
-        let c1: Container, c2: Container;
-        // Distribusi target count ke anak-anaknya
-        const halfCount = Math.ceil(targetCount / 2);
-        const remCount = targetCount - halfCount;
-
-        if (splitH) {
-            const h1 = Math.floor(c.height * ratio);
-            // Shared edge: y + h1. Container 1 ends at h1. Container 2 starts at h1.
-            c1 = new Container(c.x, c.y, c.width, h1);
-            c2 = new Container(c.x, c.y + h1, c.width, c.height - h1);
-        } else {
-            const w1 = Math.floor(c.width * ratio);
-            c1 = new Container(c.x, c.y, w1, c.height);
-            c2 = new Container(c.x + w1, c.y, c.width - w1, c.height);
-        }
-
-        this.bspSplit(c1, halfCount, results);
-        this.bspSplit(c2, remCount, results);
-    }
-
-    // ==========================================
-    // UTILS & HELPERS
-    // ==========================================
-
-    private connectRooms(leaves: Container[], grid: number[][], mapData: MapData) {
-        // Hubungkan ruangan sesuai 'connections' di JSON
-        // Gunakan Pathfinding sederhana (Manhattan) dengan brush 2-tile
-        
-        const dig = (x: number, y: number) => {
-            for(let dy=0; dy<2; dy++) for(let dx=0; dx<2; dx++) {
-                if(y+dy < grid.length && x+dx < grid[0].length) {
-                    if(grid[y+dy][x+dx] === this.WALL) {
-                        grid[y+dy][x+dx] = this.FLOOR;
-                        mapData.tiles.push({ x: x+dx, y: y+dy, sprite: 'floor_common', layer: 'floor' });
-                    }
+            // Validasi Overlap dengan ruangan lain (selain parent)
+            // Note: Overlap dengan parent pasti terjadi (1 pixel) dan itu diinginkan.
+            // Overlap dengan yang lain tidak boleh > 1 pixel.
+            let collision = false;
+            for (const other of allRooms) {
+                if (other === parent) continue; // Ignore parent overlap (it's intentional)
+                if (child.overlaps(other)) {
+                    collision = true;
+                    break;
                 }
             }
-        };
 
-        leaves.forEach(leaf => {
-            if (!leaf.room) return;
-            leaf.room.connections.forEach(targetId => {
-                const target = leaves.find(l => l.room && l.room.id === targetId);
-                if (target) {
-                    // Jalan dari center ke center
-                    let cx = leaf.center.x;
-                    let cy = leaf.center.y;
-                    const tx = target.center.x;
-                    const ty = target.center.y;
+            if (!collision) return true; // Success!
+        }
 
-                    // L-Shape Path
-                    while(cx !== tx) {
-                        cx += (cx < tx) ? 1 : -1;
-                        dig(cx, cy);
-                    }
-                    while(cy !== ty) {
-                        cy += (cy < ty) ? 1 : -1;
-                        dig(cx, cy);
-                    }
+        return false; // Gagal di semua sisi
+    }
+
+    private generateDoors(rooms: Rect[], grid: number[][], mapData: MapData) {
+        // Cari perbatasan antar room yang terhubung, lalu lubangi
+        rooms.forEach(roomA => {
+            const connections = roomA.room.connections || [];
+            connections.forEach(targetId => {
+                const roomB = rooms.find(r => r.room.id === targetId);
+                if (roomB) {
+                    this.carveDoor(roomA, roomB, grid, mapData);
                 }
             });
         });
+    }
+
+    private carveDoor(r1: Rect, r2: Rect, grid: number[][], mapData: MapData) {
+        // Cari area overlap (Intersection Rectangle)
+        const x1 = Math.max(r1.x, r2.x);
+        const y1 = Math.max(r1.y, r2.y);
+        const x2 = Math.min(r1.right, r2.right);
+        const y2 = Math.min(r1.bottom, r2.bottom);
+
+        // Valid intersection?
+        if (x1 < x2 && y1 < y2) {
+            // Intersection center
+            const cx = Math.floor((x1 + x2) / 2);
+            const cy = Math.floor((y1 + y2) / 2);
+
+            // Carve Door (2x2 or 1x2 depending on alignment)
+            // Jika intersection wide (horizontal wall share) -> Door vertical
+            // Jika intersection tall (vertical wall share) -> Door horizontal
+            
+            const w = x2 - x1;
+            const h = y2 - y1;
+
+            if (w > h) { // Horizontal wall shared
+                // Pintu selebar 2 tile
+                if (this.isValid(cx, cy, grid)) this.setFloor(cx, cy, grid, mapData);
+                if (this.isValid(cx+1, cy, grid)) this.setFloor(cx+1, cy, grid, mapData);
+            } else { // Vertical wall shared
+                if (this.isValid(cx, cy, grid)) this.setFloor(cx, cy, grid, mapData);
+                if (this.isValid(cx, cy+1, grid)) this.setFloor(cx, cy+1, grid, mapData);
+            }
+        }
+    }
+
+    private setFloor(x: number, y: number, grid: number[][], mapData: MapData) {
+        if (grid[y][x] === this.WALL) {
+            grid[y][x] = this.FLOOR;
+            mapData.tiles.push({ x, y, sprite: 'floor_common', layer: 'floor' }); // Pintu biasanya kayu/umum
+        }
+    }
+
+    // --- Config & Helpers ---
+
+    private getRoomDimensions(type: string, name: string): { w: number, h: number } {
+        const t = type.toLowerCase();
+        const n = name.toLowerCase();
+
+        // Ukuran PAS (Genap biar gampang center align)
+        if (t.includes('hall') || t.includes('corridor')) {
+            // Koridor panjang atau hub
+            return { w: 14, h: 6 }; // Default horizontal hall
+        }
+        if (t.includes('living') || t.includes('lounge') || t.includes('common')) return { w: 12, h: 12 };
+        if (t.includes('kitchen') || t.includes('dining')) return { w: 10, h: 10 };
+        if (t.includes('master') || n.includes('master')) return { w: 10, h: 10 };
+        if (t.includes('bed')) return { w: 8, h: 8 }; // Kamar anak standar
+        if (t.includes('bath') || t.includes('wc') || t.includes('toilet')) return { w: 6, h: 6 };
+        if (t.includes('garage') || t.includes('carport')) return { w: 10, h: 14 }; // Memanjang vertikal buat mobil
+        
+        return { w: 8, h: 8 }; // Fallback
     }
 
     private generateWalls(grid: number[][], mapData: MapData) {
@@ -339,14 +289,14 @@ export class StructuredGenerator implements IMapGenerator {
         for(let y=0; y<h; y++) {
             for(let x=0; x<w; x++) {
                 if(grid[y][x] === this.WALL) {
-                    // Cek 8 arah, kalau ada floor, ini tembok facade
+                    // Render wall only if adjacent to floor (Facade)
                     let isEdge = false;
                     for(let dy=-1; dy<=1; dy++) {
                         for(let dx=-1; dx<=1; dx++) {
                             if(dy===0 && dx===0) continue;
                             const ny = y+dy;
                             const nx = x+dx;
-                            if(ny>=0 && ny<h && nx>=0 && nx<w && grid[ny][nx] === this.FLOOR) {
+                            if(this.isValid(nx, ny, grid) && grid[ny][nx] === this.FLOOR) {
                                 isEdge = true;
                             }
                         }
@@ -370,21 +320,15 @@ export class StructuredGenerator implements IMapGenerator {
         });
     }
 
-    private getRoomWeight(type: string): number {
-        const t = type.toLowerCase();
-        if (t.includes('living') || t.includes('lounge')) return 10;
-        if (t.includes('master')) return 9;
-        if (t.includes('kitchen') || t.includes('dining')) return 8;
-        if (t.includes('garage')) return 7;
-        return 5;
+    private isValid(x: number, y: number, grid: number[][]) {
+        return y >= 0 && y < grid.length && x >= 0 && x < grid[0].length;
     }
 
     private getFloorSprite(type: string): string {
         const t = type.toLowerCase();
         if (t.includes('garage') || t.includes('exterior')) return 'floor_exterior';
         if (t.includes('kitchen')) return 'floor_kitchen';
-        if (t.includes('bath') || t.includes('wc')) return 'floor_bathroom';
-        if (t.includes('living') || t.includes('dining')) return 'floor_common';
+        if (t.includes('bath')) return 'floor_bathroom';
         return 'floor_common';
     }
 }

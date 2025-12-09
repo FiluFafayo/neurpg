@@ -11,6 +11,7 @@ export type ZoneType = 'wall' | 'center' | 'doorway';
 
 export interface RoomData {
     id: string;
+    name?: string; // Optional display name
     x: number;
     y: number;
     width: number;

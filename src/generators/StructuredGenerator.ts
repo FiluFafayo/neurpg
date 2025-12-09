@@ -5,6 +5,19 @@ import { ConstraintSolver } from './ConstraintSolver';
 
 export class StructuredGenerator implements IMapGenerator {
     
+    private getRoomDimensions(type: string): { width: number, height: number } {
+        // Normalize type
+        const t = type.toLowerCase();
+        
+        if (t.includes('corridor') || t.includes('hallway')) return { width: 2, height: 8 };
+        if (t.includes('hall') || t.includes('living') || t.includes('foyer') || t.includes('ballroom')) return { width: 8, height: 8 };
+        if (t.includes('bedroom') || t.includes('kitchen') || t.includes('dining')) return { width: 5, height: 5 };
+        if (t.includes('toilet') || t.includes('storage') || t.includes('pantry')) return { width: 3, height: 3 };
+        
+        // Default
+        return { width: 6, height: 6 };
+    }
+
     generate(config: MapConfig): MapData {
         console.log(`[StructuredGenerator] Building Layout (Growth Algorithm)...`);
         
@@ -24,14 +37,14 @@ export class StructuredGenerator implements IMapGenerator {
         // 1. Place Root Room (Center)
         if (roomsToPlace.length > 0) {
             const root = roomsToPlace.shift()!;
-            const w = 6; 
-            const h = 6;
-            const x = Math.floor(config.width / 2 - w / 2);
-            const y = Math.floor(config.height / 2 - h / 2);
+            const dims = this.getRoomDimensions(root.type);
+            const x = Math.floor(config.width / 2 - dims.width / 2);
+            const y = Math.floor(config.height / 2 - dims.height / 2);
 
             const placedRoot: PlacedRoom = {
                 id: root.id,
-                x, y, width: w, height: h,
+                name: root.name,
+                x, y, width: dims.width, height: dims.height,
                 type: root.type
             };
             placedRooms.push(placedRoot);
@@ -41,8 +54,12 @@ export class StructuredGenerator implements IMapGenerator {
         // 2. Grow/Pack remaining rooms
         while (roomsToPlace.length > 0) {
             const currentRoom = roomsToPlace.shift()!;
-            const w = 6; 
-            const h = 6;
+            const dims = this.getRoomDimensions(currentRoom.type);
+            
+            // Randomly rotate rectangular rooms (50% chance)
+            if (dims.width !== dims.height && Math.random() > 0.5) {
+                [dims.width, dims.height] = [dims.height, dims.width];
+            }
 
             // Find parent (connected room already placed)
             // If no explicit connection found, just attach to the last placed room (fallback chain)
@@ -50,15 +67,16 @@ export class StructuredGenerator implements IMapGenerator {
             if (!parent) parent = placedRooms[placedRooms.length - 1]; // Chain fallback
 
             if (parent) {
-                const pos = this.findValidPosition(parent, w, h, placedRooms, config.width, config.height);
+                const pos = this.findValidPosition(parent, dims.width, dims.height, placedRooms, config.width, config.height);
                 
                 if (pos) {
                     const newRoom: PlacedRoom = {
                         id: currentRoom.id,
+                        name: currentRoom.name,
                         x: pos.x,
                         y: pos.y,
-                        width: w,
-                        height: h,
+                        width: dims.width,
+                        height: dims.height,
                         type: currentRoom.type
                     };
                     placedRooms.push(newRoom);
@@ -79,38 +97,54 @@ export class StructuredGenerator implements IMapGenerator {
                     grid[y][x] = 0; // Floor
                     mapData.tiles.push({
                         x, y,
-                        sprite: 'floor_wood', // House aesthetic
+                        sprite: 'floor_' + room.type, // Semantic Key for AssetMapper
                         layer: 'floor'
                     });
                 }
             }
         });
 
-        // 4. Place Walls (Perimeter of 0s touching 1s)
+        // 4. Place Walls (2-Pass Bitmasking)
+        const wallGrid = Array(config.height).fill(false).map(() => Array(config.width).fill(false));
+
+        // Pass 1: Identify Wall Locations (Void touching Floor)
         for (let y = 1; y < config.height - 1; y++) {
             for (let x = 1; x < config.width - 1; x++) {
                 if (grid[y][x] === 0) {
-                    // Check neighbors for void/wall
                     const neighbors = [[0,1], [0,-1], [1,0], [-1,0]];
                     for (const [dx, dy] of neighbors) {
                         if (grid[y+dy][x+dx] === 1) {
-                            // It's an edge, place a wall ON the void
-                            // Note: In this simple logic, we might overwrite void with wall
-                            // But for tile-based, we usually want the wall ON the floor edge or OUTSIDE?
-                            // Let's place wall ON the perimeter void
-                             const wx = x + dx;
-                             const wy = y + dy;
-                             
-                             // Check if we already placed a wall or door there
-                             const existing = mapData.tiles.find(t => t.x === wx && t.y === wy);
-                             if (!existing) {
-                                 mapData.tiles.push({
-                                     x: wx, y: wy,
-                                     sprite: 'wall_brick',
-                                     layer: 'wall'
-                                 });
-                             }
+                            wallGrid[y+dy][x+dx] = true;
                         }
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Place Wall Tiles with Bitmasking
+        for (let y = 0; y < config.height; y++) {
+            for (let x = 0; x < config.width; x++) {
+                if (wallGrid[y][x]) {
+                    // Check neighbors (Boundaries count as empty/non-wall for now)
+                    const n = (y > 0 && wallGrid[y-1][x]) ? 1 : 0;
+                    const w = (x > 0 && wallGrid[y][x-1]) ? 1 : 0;
+                    const e = (x < config.width - 1 && wallGrid[y][x+1]) ? 1 : 0;
+                    const s = (y < config.height - 1 && wallGrid[y+1][x]) ? 1 : 0;
+                    
+                    // Bitmask: N=1, W=2, E=4, S=8
+                    const mask = (n * 1) + (w * 2) + (e * 4) + (s * 8);
+                    
+                    // Check if door already exists here
+                    const existing = mapData.tiles.find(t => t.x === x && t.y === y);
+                    if (!existing) {
+                         // Future-proofing: We can map mask to specific frames
+                         // e.g. sprite: `wall_brick_${mask}`
+                         
+                         mapData.tiles.push({
+                             x, y,
+                             sprite: 'wall_brick', 
+                             layer: 'wall'
+                         });
                     }
                 }
             }
@@ -129,29 +163,83 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private findValidPosition(parent: PlacedRoom, w: number, h: number, placedRooms: PlacedRoom[], mapW: number, mapH: number): { x: number, y: number } | null {
-        // Try all 4 sides of parent
-        // North
-        const candidates = [
-            { x: parent.x + (parent.width - w) / 2, y: parent.y - h }, // Top (Centered)
-            { x: parent.x + (parent.width - w) / 2, y: parent.y + parent.height }, // Bottom
-            { x: parent.x - w, y: parent.y + (parent.height - h) / 2 }, // Left
-            { x: parent.x + parent.width, y: parent.y + (parent.height - h) / 2 } // Right
-        ];
+        const candidates: {x: number, y: number, dist: number}[] = [];
+        const sides = ['top', 'bottom', 'left', 'right'];
+        
+        // Shuffle sides for randomness
+        for (let i = sides.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [sides[i], sides[j]] = [sides[j], sides[i]];
+        }
 
-        // Integer snap
-        candidates.forEach(c => {
-            c.x = Math.floor(c.x);
-            c.y = Math.floor(c.y);
-        });
+        for (const side of sides) {
+            let startX = 0, endX = 0, startY = 0, endY = 0;
+            let fixedX = -1, fixedY = -1;
+            let isHorizontal = false;
 
-        for (const pos of candidates) {
-            // Check Map Bounds
-            if (pos.x < 2 || pos.y < 2 || pos.x + w >= mapW - 2 || pos.y + h >= mapH - 2) continue;
+            if (side === 'top') {
+                // Room is ABOVE parent
+                fixedY = parent.y - h;
+                // Sliding range for X:
+                // Rightmost pixel of Room (x+w) must be > Parent Left (parent.x)
+                // Leftmost pixel of Room (x) must be < Parent Right (parent.x + parent.width)
+                // Range: [parent.x - w + 1, parent.x + parent.width - 1]
+                startX = parent.x - w + 1;
+                endX = parent.x + parent.width - 1;
+                isHorizontal = true;
+            } else if (side === 'bottom') {
+                // Room is BELOW parent
+                fixedY = parent.y + parent.height;
+                startX = parent.x - w + 1;
+                endX = parent.x + parent.width - 1;
+                isHorizontal = true;
+            } else if (side === 'left') {
+                // Room is LEFT of parent
+                fixedX = parent.x - w;
+                startY = parent.y - h + 1;
+                endY = parent.y + parent.height - 1;
+                isHorizontal = false;
+            } else if (side === 'right') {
+                // Room is RIGHT of parent
+                fixedX = parent.x + parent.width;
+                startY = parent.y - h + 1;
+                endY = parent.y + parent.height - 1;
+                isHorizontal = false;
+            }
 
+            // Iterate along the edge
+            if (isHorizontal) {
+                for (let x = startX; x <= endX; x++) {
+                    candidates.push({ x, y: fixedY, dist: Math.abs(x - (parent.x + parent.width/2 - w/2)) });
+                }
+            } else {
+                for (let y = startY; y <= endY; y++) {
+                    candidates.push({ x: fixedX, y, dist: Math.abs(y - (parent.y + parent.height/2 - h/2)) });
+                }
+            }
+        }
+
+        // Sort by distance to center of parent side (to keep it compact-ish) but add some noise
+        // actually, let's just shuffle them to be "organic" as requested before, 
+        // OR prioritize "fit". The user said "Slide... until it finds a valid gap."
+        // Let's stick to the previous "randomized candidates" approach but now we have MANY more candidates.
+        
+        // Filter invalid bounds immediately
+        const validBoundsCandidates = candidates.filter(c => 
+            c.x >= 2 && c.y >= 2 && c.x + w < mapW - 2 && c.y + h < mapH - 2
+        );
+
+        // Shuffle
+        for (let i = validBoundsCandidates.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [validBoundsCandidates[i], validBoundsCandidates[j]] = [validBoundsCandidates[j], validBoundsCandidates[i]];
+        }
+
+        for (const pos of validBoundsCandidates) {
             // Check Overlap
             let overlap = false;
             for (const other of placedRooms) {
-                // AABB Intersection
+                // Strict AABB (no overlap allowed)
                 if (pos.x < other.x + other.width &&
                     pos.x + w > other.x &&
                     pos.y < other.y + other.height &&
@@ -160,8 +248,7 @@ export class StructuredGenerator implements IMapGenerator {
                     break;
                 }
             }
-
-            if (!overlap) return pos;
+            if (!overlap) return { x: pos.x, y: pos.y };
         }
 
         return null;

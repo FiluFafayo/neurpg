@@ -53,11 +53,12 @@ export class MainScene extends Phaser.Scene {
     this.controls = new Phaser.Cameras.Controls.SmoothedKeyControl(controlConfig);
 
     // Touch Controls
-    this.input.on('pointermove', this.handleTouchMove, this);
+    this.input.on('pointermove', this.handlePointerMove, this);
     this.input.on('pointerup', this.handleTap, this);
+    this.input.on('wheel', this.handleWheel, this);
 
     // Instructions
-    this.add.text(16, 60, 'Controls:\nArrows/Drag to Pan\nQ/E/Pinch to Zoom\n[D] Debug Info', {
+    this.add.text(16, 60, 'Controls:\nArrows/Drag to Pan\nScroll/Pinch to Zoom\n[D] Debug Info', {
         fontSize: '14px',
         color: '#aaaaaa'
     });
@@ -165,10 +166,16 @@ export class MainScene extends Phaser.Scene {
       return `${mb.toFixed(2)} MB`;
   }
 
-  private handleTouchMove(_pointer: Phaser.Input.Pointer) {
-    // Check for 2 fingers
+  private handleWheel(pointer: Phaser.Input.Pointer, _over: any, _deltaX: number, deltaY: number, _z: number) {
+      const zoomSpeed = 0.001;
+      const newZoom = this.cameras.main.zoom - deltaY * zoomSpeed;
+      this.cameras.main.setZoom(Phaser.Math.Clamp(newZoom, 0.5, 4.0));
+  }
+
+  private handlePointerMove(pointer: Phaser.Input.Pointer) {
+    // 1. Two-Finger Touch Logic (Pinch & Pan)
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
-        // 1. Pinch Zoom
+        // Pinch Zoom
         const dist = Phaser.Math.Distance.Between(
             this.input.pointer1.x, this.input.pointer1.y,
             this.input.pointer2.x, this.input.pointer2.y
@@ -183,14 +190,13 @@ export class MainScene extends Phaser.Scene {
             this.cameras.main.setZoom(Phaser.Math.Clamp(this.pinchState.initialZoom * scale, 0.5, 4.0));
         }
 
-        // 2. Two-Finger Pan
+        // Pan (Midpoint)
         const midX = (this.input.pointer1.x + this.input.pointer2.x) / 2;
         const midY = (this.input.pointer1.y + this.input.pointer2.y) / 2;
 
         if (this.panState.active) {
             const dx = midX - this.panState.lastX;
             const dy = midY - this.panState.lastY;
-            // Scroll moves opposite to drag
             this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
             this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
         }
@@ -198,9 +204,23 @@ export class MainScene extends Phaser.Scene {
         this.panState.active = true;
         this.panState.lastX = midX;
         this.panState.lastY = midY;
-
+        return;
+    } 
+    
+    // 2. Single Pointer Drag (Desktop Pan)
+    if (pointer.isDown) {
+        if (this.panState.active) {
+            const dx = pointer.x - this.panState.lastX;
+            const dy = pointer.y - this.panState.lastY;
+            this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
+            this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
+        }
+        
+        this.panState.active = true;
+        this.panState.lastX = pointer.x;
+        this.panState.lastY = pointer.y;
     } else {
-        // Reset states if fingers lifted
+        // Reset states if no fingers/mouse down
         this.pinchState.active = false;
         this.panState.active = false;
     }
@@ -223,6 +243,9 @@ export class MainScene extends Phaser.Scene {
     let closestDist = SEARCH_RADIUS;
 
     this.mapContainer.list.forEach((child: any) => {
+        // Only consider Sprites (ignore Debug Rects/Text)
+        if (child.type !== 'Sprite') return;
+
         // Simple distance check
         const dist = Phaser.Math.Distance.Between(child.x, child.y, localX, localY);
         if (dist < closestDist) {
@@ -231,7 +254,7 @@ export class MainScene extends Phaser.Scene {
         }
     });
 
-    if (closestChild) {
+    if (closestChild && closestChild.texture) {
         console.log(`[Interaction] Tapped ${closestChild.texture.key}`);
         // Feedback
         this.tweens.add({
@@ -312,7 +335,7 @@ export class MainScene extends Phaser.Scene {
           const text = this.add.text(
               room.x * TILE_SIZE, 
               room.y * TILE_SIZE, 
-              room.type, 
+              room.name || room.type, 
               { fontSize: '10px', color: '#fff', backgroundColor: '#000' }
           );
           this.mapContainer.add(text);

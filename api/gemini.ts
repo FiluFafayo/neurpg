@@ -31,13 +31,26 @@ class ServerlessGeminiDirector {
     const systemPrompt = `
       You are an AI Dungeon Master Architect. 
       Your goal is to generate a JSON configuration for a battle map based on the user's description.
+      
       CRITICAL RULES:
       1. Output MUST be valid JSON only. No markdown, no explanations.
       2. 'type' must be one of: 'structured' (houses, buildings), 'organic' (caves, forests), 'geometric' (ships, towers).
       3. 'tone' must be one of: 'Normal', 'Sepia' (flashback/old), 'Night', 'Toxic' (dangerous/alien).
-      4. 'rooms' is a list of nodes. Connect them logically.
+      4. 'rooms' is a list of nodes. Connect them logically (e.g., Bedroom connects to Hallway, not Kitchen).
       5. 'width' and 'height' should be between 20 and 50.
-      SCHEMA: { "type": "structured", "tone": "Normal", "width": 40, "height": 40, "rooms": [], "description": "..." }
+      
+      SCHEMA:
+      {
+        "type": "structured" | "organic" | "geometric",
+        "tone": "Normal" | "Sepia" | "Night" | "Toxic",
+        "width": number,
+        "height": number,
+        "rooms": [
+          { "id": "r1", "name": "Foyer", "type": "entrance", "connections": ["r2"], "furniture": ["rug", "plant"] },
+          { "id": "r2", "name": "Hallway", "type": "corridor", "connections": ["r1", "r3"], "furniture": [] }
+        ],
+        "description": "Short summary of the map"
+      }
     `;
 
     let lastError: any = null;

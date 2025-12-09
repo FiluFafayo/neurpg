@@ -273,6 +273,8 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     // --- PHASE 2: Smart Wall Logic ---
+    // Fix: Commented out dead code to satisfy TS6133 (noUnusedLocals)
+    /*
     private calculateBitmask(grid: number[][], x: number, y: number): number {
         // NESW bitmasking (North=1, East=2, South=4, West=8)
         // Checks if neighbor is a WALL (1) or BOUNDARY
@@ -293,4 +295,5 @@ export class StructuredGenerator implements IMapGenerator {
 
         return mask;
     }
+    */
 }

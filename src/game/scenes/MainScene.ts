@@ -158,11 +158,13 @@ export class MainScene extends Phaser.Scene {
 
   private getTextureMemoryUsage(): string {
       let totalBytes = 0;
-      const textures = this.textures.list;
+      // Fix: Cast 'list' explicitly to Record to satisfy TS7053
+      const textures = this.textures.list as Record<string, Phaser.Textures.Texture>;
       
       for (const key in textures) {
           const texture = textures[key];
-          texture.source.forEach(source => {
+          // Fix: Explicit type for 'source' to satisfy TS7006
+          texture.source.forEach((source: Phaser.Textures.TextureSource) => {
               totalBytes += source.width * source.height * 4; // Approx 4 bytes per pixel (RGBA)
           });
       }
@@ -171,7 +173,8 @@ export class MainScene extends Phaser.Scene {
       return `${mb.toFixed(2)} MB`;
   }
 
-  private handleWheel(pointer: Phaser.Input.Pointer, _over: any, _deltaX: number, deltaY: number, _z: number) {
+  // Fix: Rename unused 'pointer' to '_pointer' to satisfy TS6133
+  private handleWheel(_pointer: Phaser.Input.Pointer, _over: any, _deltaX: number, deltaY: number, _z: number) {
       const zoomSpeed = 0.001;
       const newZoom = this.cameras.main.zoom - deltaY * zoomSpeed;
       this.cameras.main.setZoom(Phaser.Math.Clamp(newZoom, 0.5, 4.0));

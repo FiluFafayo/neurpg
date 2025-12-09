@@ -204,12 +204,6 @@ export class StructuredGenerator implements IMapGenerator {
             // Must NOT overlap significantly with any other room (except parent shared wall)
             let collision = false;
             for (const other of allRooms) {
-                // Ignore self/parent logic handled by rect.overlaps logic adjustment?
-                // Actually, since we force 1px overlap, 'overlaps' function in Rect needs to be robust.
-                // Our Rect.overlaps handles >1px intersection.
-                // If rooms just touch or share 1px wall, overlaps returns false.
-                // But we purposefully place them to share 1px.
-                // So if overlaps(other) is true, it means >1px intrusion, which is BAD.
                 if (child.overlaps(other)) {
                     collision = true;
                     break;
@@ -319,53 +313,6 @@ export class StructuredGenerator implements IMapGenerator {
              return { w: 10, h: 12 };
         }
         
-        return { w: 6, h: 6 }; 
-    }
-        
-        // Base sizes (in tiles) scaled by map size
-        // Function to ensure even numbers (for centering logic)
-        const size = (percent: number, min: number) => {
-            let val = Math.floor(scale * percent);
-            if (val < min) val = min;
-            if (val % 2 !== 0) val++; // Genapkan
-            return val;
-        };
-
-        if (t.includes('hall') || t.includes('corridor')) {
-            // Dynamic Hallway: 
-            // If it connects to MANY rooms (like a Boarding House), it needs to be LONG.
-            // If simple house, keep it moderate.
-            const connCount = (this.getConfig(config, n) || []).length;
-            const len = Math.max(8, Math.min(Math.floor(scale * 0.6), connCount * 4)); 
-            return { w: len, h: 4 }; // Lebar 4 (2 meter), Panjang dinamis
-        }
-        if (t.includes('living') || t.includes('common') || t.includes('lounge')) {
-            // Ruang utama: Besar (25-30% map)
-            const s = size(0.25, 8);
-            return { w: s, h: s };
-        }
-        if (t.includes('kitchen') || t.includes('dining')) {
-            const s = size(0.20, 6);
-            return { w: s, h: s };
-        }
-        if (t.includes('master') || n.includes('master')) {
-            const s = size(0.20, 8);
-            return { w: s, h: s };
-        }
-        if (t.includes('bed')) {
-            const s = size(0.15, 6); // Kamar standar lebih kecil
-            return { w: s, h: s };
-        }
-        if (t.includes('bath') || t.includes('wc') || t.includes('toilet')) {
-            const s = size(0.10, 4); // WC kecil
-            return { w: s, h: s };
-        }
-        if (t.includes('garage') || t.includes('carport')) {
-            // Garasi memanjang
-            return { w: size(0.2, 8), h: size(0.25, 10) };
-        }
-        
-        // Default
         return { w: 6, h: 6 }; 
     }
 

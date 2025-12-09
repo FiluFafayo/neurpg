@@ -1,74 +1,104 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// api/gemini.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 
-export const config = {
-  runtime: 'edge', // Wajib untuk Vercel Edge Functions
-};
+// --- Re-defining necessary types here to avoid pathing issues ---
+interface MapConfig {
+  type: 'structured' | 'organic' | 'geometric';
+  tone: 'Normal' | 'Sepia' | 'Night' | 'Toxic';
+  width: number;
+  height: number;
+  rooms: { id: string; name: string; type: string; connections: string[]; furniture: string[] }[];
+  description: string;
+}
 
-export default async function handler(request: Request) {
-  if (request.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), { status: 405 });
+// --- Logic from GeminiDirector, adapted for serverless environment ---
+class ServerlessGeminiDirector {
+  private genAI: GoogleGenerativeAI;
+  private models: GenerativeModel[];
+  private modelNames: string[] = [
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+  ];
+
+  constructor(apiKey: string) {
+    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.models = this.modelNames.map(modelName => this.genAI.getGenerativeModel({ model: modelName }));
   }
 
-  try {
-    const { prompt } = await request.json();
-    
-    // --- INI KUNCINYA: System Instruction Arsitek (Dari GeminiDirector) ---
+  async generateMapConfig(userPrompt: string): Promise<MapConfig> {
     const systemPrompt = `
-      You are an expert TTRPG Battle Map Architect designed to generate procedural map configurations for a 2D tile-based game (D&D 5e style).
+      You are an AI Dungeon Master Architect. 
+      Your goal is to generate a JSON configuration for a battle map based on the user's description.
       
-      Your Output MUST be a valid JSON object strictly following this schema:
+      CRITICAL RULES:
+      1. Output MUST be valid JSON only. No markdown, no explanations.
+      2. 'type' must be one of: 'structured' (houses, buildings), 'organic' (caves, forests), 'geometric' (ships, towers).
+      3. 'tone' must be one of: 'Normal', 'Sepia' (flashback/old), 'Night', 'Toxic' (dangerous/alien).
+      4. 'rooms' is a list of nodes. Connect them logically (e.g., Bedroom connects to Hallway, not Kitchen).
+      5. 'width' and 'height' should be between 20 and 50.
+      
+      SCHEMA:
       {
         "type": "structured" | "organic" | "geometric",
         "tone": "Normal" | "Sepia" | "Night" | "Toxic",
-        "width": number (integer, min 40, max 60),
-        "height": number (integer, min 40, max 60),
-        "description": "Short summary of the map layout",
+        "width": number,
+        "height": number,
         "rooms": [
-          {
-            "id": "r1",
-            "name": "Room Name",
-            "type": "bedroom" | "living" | "kitchen" | "corridor" | "entrance" | "storage" | "bathroom" | "exterior" | "main" | "utility",
-            "connections": ["r2", "r3"],
-            "furniture": ["bed", "table", "chest"]
-          }
-        ]
+          { "id": "r1", "name": "Foyer", "type": "entrance", "connections": ["r2"], "furniture": ["rug", "plant"] },
+          { "id": "r2", "name": "Hallway", "type": "corridor", "connections": ["r1", "r3"], "furniture": [] }
+        ],
+        "description": "Short summary of the map"
       }
-
-      RULES:
-      1. Map Size: MUST be spacious. Minimum 40x40 tiles. DO NOT generate small maps (e.g. 20x20).
-      2. Connectivity: Ensure ALL rooms are reachable. Use 'corridor' or 'hallway' as central hubs for 'structured' maps.
-      3. Logic: 
-         - 'structured': Houses/Buildings. Use logic (Foyer -> Hall -> Bedrooms).
-         - 'organic': Caves/Forests. Irregular connections.
-         - 'geometric': Towers/Ships. Symmetrical connections.
-      4. Furniture: List generic furniture IDs.
-      5. Response must be JSON ONLY. No markdown formatting.
     `;
 
-    const fullPrompt = `${systemPrompt}\n\nUser Request: ${prompt}`;
+    let lastError: any = null;
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        return new Response(JSON.stringify({ error: 'Missing API Key' }), { status: 500 });
+    for (const model of this.models) {
+      try {
+        const result = await model.generateContent([systemPrompt, `User Request: "${userPrompt}"`]);
+        const response = await result.response;
+        const text = response.text();
+        const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        return JSON.parse(cleanJson) as MapConfig;
+      } catch (error) {
+        console.warn(`A model failed. Trying next model.`, error);
+        lastError = error;
+      }
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    console.error("Gemini Generation Failed for all models:", lastError);
+    throw new Error("Failed to generate map configuration with any available model.");
+  }
+}
 
-    // Generate
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    let text = response.text();
+// --- Vercel Serverless Function Handler ---
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
 
-    // Sanitasi JSON (Hapus markdown ```json jika ada)
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+  const { prompt } = req.body;
+  const apiKey = process.env.VITE_GEMINI_API_KEY;
 
-    return new Response(text, {
-      headers: { 'Content-Type': 'application/json' },
-    });
+  if (!apiKey) {
+    return res.status(500).json({ error: 'API key not configured on server' });
+  }
 
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  try {
+    const director = new ServerlessGeminiDirector(apiKey);
+    const config = await director.generateMapConfig(prompt);
+    res.status(200).json(config);
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    console.error('Error in Gemini API handler:', error);
+    // CRITICAL DEBUG: Expose actual error message to client
+    const message = error instanceof Error ? error.message : 'Unknown Error';
+    const details = error.response ? JSON.stringify(error.response) : '';
+    res.status(500).json({ error: `Gemini API Error: ${message}`, details });
   }
 }

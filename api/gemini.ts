@@ -17,8 +17,9 @@ class ServerlessGeminiDirector {
   private genAI: GoogleGenerativeAI;
   private models: GenerativeModel[];
   private modelNames: string[] = [
-    'gemini-1.5-flash-latest',
-    'gemini-pro',
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
   ];
 
   constructor(apiKey: string) {
@@ -80,8 +81,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const director = new ServerlessGeminiDirector(apiKey);
     const config = await director.generateMapConfig(prompt);
     res.status(200).json(config);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error in Gemini API handler:', error);
-    res.status(500).json({ error: 'Failed to generate map configuration' });
+    // CRITICAL DEBUG: Expose actual error message to client
+    const message = error instanceof Error ? error.message : 'Unknown Error';
+    const details = error.response ? JSON.stringify(error.response) : '';
+    res.status(500).json({ error: `Gemini API Error: ${message}`, details });
   }
 }

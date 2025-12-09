@@ -53,10 +53,10 @@ export class StructuredGenerator implements IMapGenerator {
         // 1. Setup Grid
         const grid: number[][] = Array(config.height).fill(0).map(() => Array(config.width).fill(this.WALL));
 
-        // 2. Tentukan Ukuran Ruangan (Dimensi Baku)
-        // Kita tentukan ukuran di awal biar placement gampang
+        // 2. Tentukan Ukuran Ruangan (Dimensi Dinamis)
         const roomRects: Rect[] = config.rooms.map(room => {
-            const dim = this.getRoomDimensions(room.type, room.name);
+            // Pass map dimensions here!
+            const dim = this.getRoomDimensions(room.type, room.name, config.width, config.height);
             return new Rect(0, 0, dim.w, dim.h, room);
         });
 
@@ -264,23 +264,56 @@ export class StructuredGenerator implements IMapGenerator {
 
     // --- Config & Helpers ---
 
-    private getRoomDimensions(type: string, name: string): { w: number, h: number } {
+    // Ubah signature untuk menerima dimensi Map
+    private getRoomDimensions(type: string, name: string, mapW: number, mapH: number): { w: number, h: number } {
         const t = type.toLowerCase();
         const n = name.toLowerCase();
-
-        // Ukuran PAS (Genap biar gampang center align)
-        if (t.includes('hall') || t.includes('corridor')) {
-            // Koridor panjang atau hub
-            return { w: 14, h: 6 }; // Default horizontal hall
-        }
-        if (t.includes('living') || t.includes('lounge') || t.includes('common')) return { w: 12, h: 12 };
-        if (t.includes('kitchen') || t.includes('dining')) return { w: 10, h: 10 };
-        if (t.includes('master') || n.includes('master')) return { w: 10, h: 10 };
-        if (t.includes('bed')) return { w: 8, h: 8 }; // Kamar anak standar
-        if (t.includes('bath') || t.includes('wc') || t.includes('toilet')) return { w: 6, h: 6 };
-        if (t.includes('garage') || t.includes('carport')) return { w: 10, h: 14 }; // Memanjang vertikal buat mobil
         
-        return { w: 8, h: 8 }; // Fallback
+        // Helper: Persentase minimal dari map (biar proporsional)
+        // Kita pakai Math.min(mapW, mapH) sebagai acuan skala
+        const scale = Math.min(mapW, mapH);
+        
+        // Base sizes (in tiles) scaled by map size
+        // Function to ensure even numbers (for centering logic)
+        const size = (percent: number, min: number) => {
+            let val = Math.floor(scale * percent);
+            if (val < min) val = min;
+            if (val % 2 !== 0) val++; // Genapkan
+            return val;
+        };
+
+        if (t.includes('hall') || t.includes('corridor')) {
+            // Koridor: Panjang ikut map, lebar fix kecil
+            return { w: Math.floor(scale * 0.4), h: 4 }; // 40% panjang, lebar 4 (2 meter)
+        }
+        if (t.includes('living') || t.includes('common') || t.includes('lounge')) {
+            // Ruang utama: Besar (25-30% map)
+            const s = size(0.25, 8);
+            return { w: s, h: s };
+        }
+        if (t.includes('kitchen') || t.includes('dining')) {
+            const s = size(0.20, 6);
+            return { w: s, h: s };
+        }
+        if (t.includes('master') || n.includes('master')) {
+            const s = size(0.20, 8);
+            return { w: s, h: s };
+        }
+        if (t.includes('bed')) {
+            const s = size(0.15, 6); // Kamar standar lebih kecil
+            return { w: s, h: s };
+        }
+        if (t.includes('bath') || t.includes('wc') || t.includes('toilet')) {
+            const s = size(0.10, 4); // WC kecil
+            return { w: s, h: s };
+        }
+        if (t.includes('garage') || t.includes('carport')) {
+            // Garasi memanjang
+            return { w: size(0.2, 8), h: size(0.25, 10) };
+        }
+        
+        // Default
+        return { w: 6, h: 6 }; 
     }
 
     private generateWalls(grid: number[][], mapData: MapData) {

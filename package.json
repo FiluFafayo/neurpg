@@ -31,5 +31,8 @@
     "eslint-plugin-react-refresh": "^0.4.6",
     "typescript": "^5.2.2",
     "vite": "^7.2.7"
+  },
+  "overrides": {
+    "path-to-regexp": "6.2.2"
   }
 }

@@ -61,7 +61,45 @@ class ServerlessGeminiDirector {
         const response = await result.response;
         const text = response.text();
         const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        return JSON.parse(cleanJson) as MapConfig;
+        const config = JSON.parse(cleanJson) as MapConfig;
+        
+        // --- SANITIZATION & VALIDATION PHASE ---
+        // 1. Validate Connections: Remove connections to non-existent IDs
+        const roomIds = new Set(config.rooms.map(r => r.id));
+        config.rooms.forEach(room => {
+            if (!room.connections) room.connections = [];
+            room.connections = room.connections.filter(targetId => roomIds.has(targetId));
+        });
+
+        // 2. Ensure Connectivity (Graph Repair)
+        // If graph is disconnected, force connect orphans to the first room (Hub)
+        if (config.rooms.length > 1) {
+             const hubId = config.rooms[0].id;
+             const visited = new Set<string>();
+             const queue = [hubId];
+             
+             // BFS to find reachable
+             while(queue.length > 0) {
+                 const curr = queue.shift()!;
+                 if(visited.has(curr)) continue;
+                 visited.add(curr);
+                 
+                 const room = config.rooms.find(r => r.id === curr);
+                 room?.connections.forEach(n => queue.push(n));
+             }
+
+             // Connect orphans
+             config.rooms.forEach(room => {
+                 if (!visited.has(room.id)) {
+                     console.warn(`[GeminiDirector] Orphan room detected: ${room.name}. Auto-connecting to Hub.`);
+                     room.connections.push(hubId);
+                     const hub = config.rooms.find(r => r.id === hubId);
+                     hub?.connections.push(room.id);
+                 }
+             });
+        }
+
+        return config;
       } catch (error) {
         console.warn(`A model failed. Trying next model.`, error);
         lastError = error;

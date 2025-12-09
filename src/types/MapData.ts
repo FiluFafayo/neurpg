@@ -18,6 +18,7 @@ export interface RoomData {
     height: number;
     type: string;
     zones?: { x: number, y: number, type: ZoneType }[];
+    doors?: { x: number, y: number }[]; // Explicit door metadata
 }
 
 export interface MapData {

@@ -61,65 +61,62 @@ export class StructuredGenerator implements IMapGenerator {
         });
 
         // 3. Start Node Selection (Hub)
-        // Cari Entrance / Foyer / Hallway utama
-        let startNode = roomRects.find(r => r.room.type.includes('entrance') || r.room.name.toLowerCase().includes('foyer'));
-        if (!startNode) startNode = roomRects.find(r => r.room.type.includes('living') || r.room.type.includes('common'));
-        if (!startNode) startNode = roomRects[0];
+        // Sort rooms by importance to be placed earlier
+        const priorityScore = (r: Rect) => {
+            const t = r.room.type.toLowerCase();
+            const n = r.room.name.toLowerCase();
+            if (t.includes('living') || t.includes('common')) return 10; // Central Hub
+            if (t.includes('hall') || t.includes('corridor')) return 8;  // Arteries
+            if (t.includes('kitchen') || t.includes('dining')) return 5;
+            if (t.includes('entrance')) return 4;
+            return 1;
+        };
+        
+        roomRects.sort((a, b) => priorityScore(b) - priorityScore(a));
+        
+        const startNode = roomRects[0];
 
-        // 4. Place First Room in Center
+        // 4. Place First Room (Center of Grid)
         startNode.x = Math.floor((config.width - startNode.w) / 2);
         startNode.y = Math.floor((config.height - startNode.h) / 2);
         
-        // Pindahkan startNode sedikit ke bawah jika dia Entrance (biar dekat pintu masuk map)
-        if (startNode.room.type === 'entrance') {
-            startNode.y = Math.floor(config.height * 0.7); 
-        }
-
         const placedRooms: Rect[] = [startNode];
-        const queue: Rect[] = [startNode];
         const placedIds = new Set<string>([startNode.room.id]);
-
-        // 5. Growth Loop (BFS)
-        while (queue.length > 0) {
-            const parent = queue.shift()!;
+        
+        // 5. Growth Loop (Iterative Fitting)
+        // We iterate through unplaced rooms and try to attach them to ANY already placed room
+        // that they are connected to.
+        let hasPlacement = true;
+        
+        while (hasPlacement) {
+            hasPlacement = false;
+            const unplaced = roomRects.filter(r => !placedIds.has(r.room.id));
             
-            // Cari tetangga yang belum ditempatkan
-            const neighborIds = parent.room.connections || [];
-            
-            for (const nbId of neighborIds) {
-                if (placedIds.has(nbId)) continue;
-
-                const child = roomRects.find(r => r.room.id === nbId);
-                if (!child) continue;
-
-                // Coba tempelkan child ke parent (4 Sisi)
-                const success = this.trySnapRoom(parent, child, placedRooms, config.width, config.height);
+            for (const child of unplaced) {
+                // Find potential parents (placed rooms that are connected to this child)
+                const potentialParents = placedRooms.filter(p => 
+                    p.room.connections.includes(child.room.id) || 
+                    child.room.connections.includes(p.room.id)
+                );
                 
-                if (success) {
-                    placedRooms.push(child);
-                    queue.push(child);
-                    placedIds.add(child.room.id);
-                } else {
-                    console.warn(`[Architect] Could not fit room ${child.room.name} connected to ${parent.room.name}`);
-                    // Fallback: Taruh di queue lagi buat diproses sama parent lain? 
-                    // Atau force place di lokasi random terdekat?
-                    // Untuk sekarang kita skip biar ga crash/overlap parah.
+                if (potentialParents.length === 0) continue; // No anchor yet
+                
+                // Try to snap to ANY parent (Closest/Best fit)
+                // We shuffle parents to avoid biasing growth direction
+                potentialParents.sort(() => Math.random() - 0.5);
+
+                for (const parent of potentialParents) {
+                    if (this.trySnapRoom(parent, child, placedRooms, config.width, config.height)) {
+                        placedRooms.push(child);
+                        placedIds.add(child.room.id);
+                        hasPlacement = true;
+                        break; 
+                    }
                 }
+                
+                if (hasPlacement) break; // Restart loop to prioritize connectivity from new growth
             }
         }
-
-        // Handle Unplaced Rooms (Disconnected components)
-        const unplaced = roomRects.filter(r => !placedIds.has(r.room.id));
-        // Simple logic: Tempelkan mereka ke ruangan terakhir yang ditaruh (Growth liar)
-        unplaced.forEach(child => {
-            for (const parent of placedRooms) {
-                if (this.trySnapRoom(parent, child, placedRooms, config.width, config.height)) {
-                    placedRooms.push(child);
-                    placedIds.add(child.room.id);
-                    break;
-                }
-            }
-        });
 
         // 6. Rasterize (Render ke Grid)
         placedRooms.forEach(r => {
@@ -171,44 +168,58 @@ export class StructuredGenerator implements IMapGenerator {
     // --- Core Placement Logic ---
 
     private trySnapRoom(parent: Rect, child: Rect, allRooms: Rect[], mapW: number, mapH: number): boolean {
-        // Shuffle arah biar gak linear terus
-        const directions = ['top', 'bottom', 'left', 'right'].sort(() => Math.random() - 0.5);
+        // PERIMETER SCANNING
+        // Instead of checking just 4 cardinal centers, we scan the entire edge of the parent
+        // to find a valid slot. This ensures we don't fail just because the center is blocked.
 
-        for (const dir of directions) {
-            // Set posisi child menempel parent
-            if (dir === 'top') {
-                child.x = parent.x + Math.floor((parent.w - child.w) / 2); // Center align
-                child.y = parent.y - child.h + 1; // +1 OVERLAP (Shared Wall)
-            } else if (dir === 'bottom') {
-                child.x = parent.x + Math.floor((parent.w - child.w) / 2);
-                child.y = parent.y + parent.h - 1; // -1 OVERLAP
-            } else if (dir === 'left') {
-                child.x = parent.x - child.w + 1; // +1 OVERLAP
-                child.y = parent.y + Math.floor((parent.h - child.h) / 2);
-            } else if (dir === 'right') {
-                child.x = parent.x + parent.w - 1; // -1 OVERLAP
-                child.y = parent.y + Math.floor((parent.h - child.h) / 2);
-            }
+        const candidates: {x: number, y: number}[] = [];
+        
+        // 1. Generate Candidates along Parent's Perimeter
+        // Top & Bottom Edges
+        for (let bx = parent.left - child.w + 2; bx < parent.right - 1; bx++) {
+             // Top
+             candidates.push({ x: bx, y: parent.top - child.h + 1 }); // +1 Overlap
+             // Bottom
+             candidates.push({ x: bx, y: parent.bottom - 1 }); // -1 Overlap
+        }
+        // Left & Right Edges
+        for (let by = parent.top - child.h + 2; by < parent.bottom - 1; by++) {
+             // Left
+             candidates.push({ x: parent.left - child.w + 1, y: by }); // +1 Overlap
+             // Right
+             candidates.push({ x: parent.right - 1, y: by }); // -1 Overlap
+        }
 
-            // Validasi Bounds
+        // Shuffle to avoid pattern bias
+        candidates.sort(() => Math.random() - 0.5);
+
+        for (const pos of candidates) {
+            child.x = pos.x;
+            child.y = pos.y;
+            
+            // 1. Boundary Check
             if (child.x < 1 || child.y < 1 || child.right > mapW - 1 || child.bottom > mapH - 1) continue;
-
-            // Validasi Overlap dengan ruangan lain (selain parent)
-            // Note: Overlap dengan parent pasti terjadi (1 pixel) dan itu diinginkan.
-            // Overlap dengan yang lain tidak boleh > 1 pixel.
+            
+            // 2. Collision Check (Strict)
+            // Must NOT overlap significantly with any other room (except parent shared wall)
             let collision = false;
             for (const other of allRooms) {
-                if (other === parent) continue; // Ignore parent overlap (it's intentional)
+                // Ignore self/parent logic handled by rect.overlaps logic adjustment?
+                // Actually, since we force 1px overlap, 'overlaps' function in Rect needs to be robust.
+                // Our Rect.overlaps handles >1px intersection.
+                // If rooms just touch or share 1px wall, overlaps returns false.
+                // But we purposefully place them to share 1px.
+                // So if overlaps(other) is true, it means >1px intrusion, which is BAD.
                 if (child.overlaps(other)) {
                     collision = true;
                     break;
                 }
             }
 
-            if (!collision) return true; // Success!
+            if (!collision) return true; // Valid placement found!
         }
 
-        return false; // Gagal di semua sisi
+        return false;
     }
 
     private generateDoors(rooms: Rect[], grid: number[][], mapData: MapData) {
@@ -225,33 +236,44 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private carveDoor(r1: Rect, r2: Rect, grid: number[][], mapData: MapData) {
-        // Cari area overlap (Intersection Rectangle)
         const x1 = Math.max(r1.x, r2.x);
         const y1 = Math.max(r1.y, r2.y);
         const x2 = Math.min(r1.right, r2.right);
         const y2 = Math.min(r1.bottom, r2.bottom);
 
-        // Valid intersection?
         if (x1 < x2 && y1 < y2) {
-            // Intersection center
             const cx = Math.floor((x1 + x2) / 2);
             const cy = Math.floor((y1 + y2) / 2);
-
-            // Carve Door (2x2 or 1x2 depending on alignment)
-            // Jika intersection wide (horizontal wall share) -> Door vertical
-            // Jika intersection tall (vertical wall share) -> Door horizontal
-            
             const w = x2 - x1;
             const h = y2 - y1;
 
+            const doorPixels: {x:number, y:number}[] = [];
+
             if (w > h) { // Horizontal wall shared
-                // Pintu selebar 2 tile
-                if (this.isValid(cx, cy, grid)) this.setFloor(cx, cy, grid, mapData);
-                if (this.isValid(cx+1, cy, grid)) this.setFloor(cx+1, cy, grid, mapData);
+                doorPixels.push({x: cx, y: cy}, {x: cx+1, y: cy});
             } else { // Vertical wall shared
-                if (this.isValid(cx, cy, grid)) this.setFloor(cx, cy, grid, mapData);
-                if (this.isValid(cx, cy+1, grid)) this.setFloor(cx, cy+1, grid, mapData);
+                doorPixels.push({x: cx, y: cy}, {x: cx, y: cy+1});
             }
+
+            // Register & Carve
+            doorPixels.forEach(p => {
+                if (this.isValid(p.x, p.y, grid)) {
+                    this.setFloor(p.x, p.y, grid, mapData);
+                    
+                    // Add to Room Metadata for Solver
+                    const room1Data = mapData.rooms.find(r => r.id === r1.room.id);
+                    const room2Data = mapData.rooms.find(r => r.id === r2.room.id);
+                    
+                    if (room1Data) {
+                        if (!room1Data.doors) room1Data.doors = [];
+                        room1Data.doors.push({x: p.x, y: p.y});
+                    }
+                    if (room2Data) {
+                        if (!room2Data.doors) room2Data.doors = [];
+                        room2Data.doors.push({x: p.x, y: p.y});
+                    }
+                }
+            });
         }
     }
 

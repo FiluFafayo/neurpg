@@ -73,65 +73,13 @@ export class ConstraintSolver {
         }
     }
 
-    /**
-     * Identifies door positions and returns vectors pointing INTO the room.
-     */
-    private static getDoorVectors(room: RoomData, grid: number[][], floorValue: number): { x: number, y: number }[] {
-        const doors: { x: number, y: number }[] = [];
-        
-        // Scan the perimeter of the bounding box + 1
-        // We look for transitions from [Non-Room-Floor] to [Room-Floor]
-        // Actually, we just look at the room's floor tiles. If a neighbor is a Walkable tile that is NOT part of this room?
-        // Or simpler: If a tile in the room is adjacent to a walkable tile that is NOT in the room.
-        
-        // Let's use the room.zones logic. If it's a 'wall' zone (edge of room), check if it connects to a corridor.
-        // In StructuredGenerator, corridors are floorValue (0).
-        // So if we are at edge of room (grid=0) and neighbor is also grid=0 but outside room rect? 
-        // Or simply, we assume "Door" is any entrance.
-        
-        // Simplified approach for Rectangular rooms:
-        // Iterate perimeter of rectangle.
-        const bounds = {
-            minX: room.x, maxX: room.x + room.width - 1,
-            minY: room.y, maxY: room.y + room.height - 1
-        };
-
-        const checkDoor = (x: number, y: number, dx: number, dy: number) => {
-             // (x,y) is inside room. (x+dx, y+dy) is outside.
-             // If outside is walkable, then (x,y) is a door entry point.
-             // The "Door Vector" is the tile (x,y) itself, or maybe (x-dx, y-dy) step inside?
-             // User said "Bed -> Cannot block DoorVector". Usually means don't place bed right in front of door.
-             // So we mark (x,y) as restricted.
-             
-             const ox = x + dx;
-             const oy = y + dy;
-             
-             if (ox >= 0 && ox < grid[0].length && oy >= 0 && oy < grid.length) {
-                 if (grid[oy][ox] === floorValue) {
-                     // It connects to another floor tile outside.
-                     doors.push({ x, y });
-                 }
-             }
-        };
-
-        // Top Edge
-        for (let x = bounds.minX; x <= bounds.maxX; x++) checkDoor(x, bounds.minY, 0, -1);
-        // Bottom Edge
-        for (let x = bounds.minX; x <= bounds.maxX; x++) checkDoor(x, bounds.maxY, 0, 1);
-        // Left Edge
-        for (let y = bounds.minY; y <= bounds.maxY; y++) checkDoor(bounds.minX, y, -1, 0);
-        // Right Edge
-        for (let y = bounds.minY; y <= bounds.maxY; y++) checkDoor(bounds.maxX, y, 1, 0);
-
-        return doors;
-    }
-
     static placeItems(room: RoomData, items: string[], mapData: MapData, grid: number[][], floorValue: number): void {
         if (!room.zones || room.zones.length === 0) {
             this.calculateZones(room, grid, floorValue);
         }
 
-        const doorVectors = this.getDoorVectors(room, grid, floorValue);
+        // Use Explicit Door Metadata if available, otherwise fallback (which shouldn't happen after refactor)
+        const doorVectors = room.doors || [];
         const placedItems: PlacedItem[] = [];
 
         // 1. Sort items. 

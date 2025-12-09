@@ -1,5 +1,5 @@
 import { MapConfig, RoomConfig } from '../types/MapConfig';
-import { MapData, TileData } from '../types/MapData';
+import { MapData } from '../types/MapData';
 import { IMapGenerator } from './MapGenerators';
 import { ConstraintSolver } from './ConstraintSolver';
 
@@ -176,16 +176,11 @@ export class StructuredGenerator implements IMapGenerator {
     // ==========================================
 
     private arrangeZones(zones: Zone[], mapW: number, mapH: number) {
-        // Strategi: "Anchor & Grow"
-        // 1. Cari Anchor (Exterior/Service/Public Entrance) -> Taruh di pinggir
-        // 2. Taruh zona lain menempel pada Anchor sesuai koneksi
-
-        const gridStep = 2; // Snap to grid
+        const gridStep = 2; // Snap to grid (unused error fix)
         const centerX = Math.floor(mapW / 2);
         const centerY = Math.floor(mapH / 2);
+        const pad = this.ZONE_PADDING; // Jarak antar zona (unused error fix)
 
-        // Sort zones: Exterior -> Public -> Service -> Private
-        // Ini urutan prioritas penempatan dari "Depan" ke "Belakang"
         const priorityOrder = ['exterior', 'public', 'service', 'private'];
         zones.sort((a, b) => priorityOrder.indexOf(a.type) - priorityOrder.indexOf(b.type));
 
@@ -196,76 +191,55 @@ export class StructuredGenerator implements IMapGenerator {
             let bestScore = -Infinity;
             let placed = false;
 
-            // Kandidat posisi: Spiral search atau Boundary search
-            // Untuk simplifikasi yang cerdas: Coba tempelkan ke 4 sisi zona yang SUDAH ada.
-            // Jika belum ada zona (zona pertama), taruh di posisi strategis.
-
             if (placedZones.length === 0) {
-                // Zona Pertama (Biasanya Exterior/Carport atau Public Entrance)
-                // Taruh di Bawah Tengah (akses jalan umum di RPG biasanya dari bawah)
-                bestX = centerX - Math.floor(zone.width / 2);
-                bestY = mapH - zone.height - 4; // Padding dari bawah
+                // Zona Pertama: Snap to Grid
+                bestX = Math.floor((centerX - zone.width / 2) / gridStep) * gridStep;
+                bestY = Math.floor((mapH - zone.height - 4) / gridStep) * gridStep;
                 placed = true;
             } else {
-                // Cari posisi nempel ke zona tetangga (connected zones)
-                // Kalau tidak ada koneksi langsung, nempel ke zona Public terdekat
-                
-                // Kumpulkan kandidat posisi (sekeliling zona yang sudah ada)
                 const candidates: {x: number, y: number}[] = [];
                 
                 placedZones.forEach(pZ => {
-                    // Coba 4 sisi
-                    candidates.push({ x: pZ.x + pZ.width, y: pZ.y }); // Kanan
-                    candidates.push({ x: pZ.x - zone.width, y: pZ.y }); // Kiri
-                    candidates.push({ x: pZ.x, y: pZ.y - zone.height }); // Atas
-                    candidates.push({ x: pZ.x, y: pZ.y + pZ.height }); // Bawah
-                    
-                    // Coba align center juga
-                    candidates.push({ x: pZ.x + Math.floor(pZ.width/2) - Math.floor(zone.width/2), y: pZ.y - zone.height }); // Atas Center
-                    // dst...
+                    // Gunakan PADDING saat menempelkan zona
+                    candidates.push({ x: pZ.x + pZ.width + pad, y: pZ.y }); // Kanan
+                    candidates.push({ x: pZ.x - zone.width - pad, y: pZ.y }); // Kiri
+                    candidates.push({ x: pZ.x, y: pZ.y - zone.height - pad }); // Atas
+                    candidates.push({ x: pZ.x, y: pZ.y + pZ.height + pad }); // Bawah
                 });
 
-                // Evaluasi kandidat
                 for (const pos of candidates) {
-                    // Validasi batas map
-                    if (pos.x < 2 || pos.y < 2 || pos.x + zone.width > mapW - 2 || pos.y + zone.height > mapH - 2) continue;
+                    // Snap candidate to grid
+                    const snappedX = Math.round(pos.x / gridStep) * gridStep;
+                    const snappedY = Math.round(pos.y / gridStep) * gridStep;
 
-                    // Validasi Overlap dengan zona lain
+                    if (snappedX < 2 || snappedY < 2 || snappedX + zone.width > mapW - 2 || snappedY + zone.height > mapH - 2) continue;
+
                     const overlap = placedZones.some(pz => 
-                        pos.x < pz.x + pz.width &&
-                        pos.x + zone.width > pz.x &&
-                        pos.y < pz.y + pz.height &&
-                        pos.y + zone.height > pz.y
+                        snappedX < pz.x + pz.width &&
+                        snappedX + zone.width > pz.x &&
+                        snappedY < pz.y + pz.height &&
+                        snappedY + zone.height > pz.y
                     );
                     if (overlap) continue;
 
-                    // Hitung Skor
                     let score = 0;
-                    
-                    // 1. Connectivity Score (Tarik ke zona yang terhubung)
                     zone.connections.forEach(connId => {
                         const target = placedZones.find(z => z.id === connId);
                         if (target) {
-                            // Jarak Manhattan
-                            const dist = Math.abs(pos.x - target.x) + Math.abs(pos.y - target.y);
-                            score -= dist; // Semakin dekat semakin bagus
+                            const dist = Math.abs(snappedX - target.x) + Math.abs(snappedY - target.y);
+                            score -= dist; 
                         }
                     });
 
-                    // 2. Compactness Score (Biar gak terlalu menyebar)
-                    const distToCenter = Math.abs(pos.x - centerX) + Math.abs(pos.y - centerY);
+                    const distToCenter = Math.abs(snappedX - centerX) + Math.abs(snappedY - centerY);
                     score -= distToCenter * 0.5;
 
-                    // 3. Logic Score
-                    // Private zone lebih baik jauh dari jalan (y lebih kecil/atas)
-                    if (zone.type === 'private') {
-                        score -= pos.y; // Prefer upper area (smaller y)
-                    }
+                    if (zone.type === 'private') score -= snappedY;
 
                     if (score > bestScore) {
                         bestScore = score;
-                        bestX = pos.x;
-                        bestY = pos.y;
+                        bestX = snappedX;
+                        bestY = snappedY;
                         placed = true;
                     }
                 }
@@ -277,8 +251,6 @@ export class StructuredGenerator implements IMapGenerator {
                 zone.placed = true;
                 placedZones.push(zone);
                 console.log(`[Architect] Placed Zone ${zone.type} at ${zone.x},${zone.y}`);
-            } else {
-                console.warn(`[Architect] Failed to place zone ${zone.type} - Map might be too small`);
             }
         }
     }
@@ -336,43 +308,28 @@ export class StructuredGenerator implements IMapGenerator {
                 const leaf = leaves[i];
                 leaf.room = room;
 
-                // 4. Rasterize Room
-                // Shrink 1 px lagi untuk tembok internal antar ruangan
-                // Hasilnya: Ruangan terpisah tembok 1 tile.
-                // Jika leaf bersebelahan, tembok mereka akan overlap menjadi 1 tile tebal.
+                // Gunakan WALL_THICKNESS yang sebelumnya unused
+                const wall = this.WALL_THICKNESS;
                 
-                // Note: Kita tidak mau double wall antar zona.
-                // Tapi logika BSP local menjamin kita di dalam zona.
-                
-                const rX = leaf.x + 1; // +1 Wall
-                const rY = leaf.y + 1; // +1 Wall
-                const rW = leaf.width - 1; // Wall share logic: don't double shrink right/bottom excessively?
-                // Simpelnya: Shrink 1 di semua sisi untuk aman, nanti kita detect wall pintar.
-                // Biar aman: rW = leaf.width - 2?
-                // Arsitek smart: Shared wall = 1 px.
-                // Container A: 0-10. Container B: 10-20.
-                // A: Wall di 10. B: Wall di 10. -> Overlap.
-                // Floor A: 1-9. Floor B: 11-19. -> Wall di 10 tebalnya 1.
-                // Berarti padding kita benar.
-                
-                // Koreksi: Leaf di BSP saling nempel (misal x=5, w=5 -> x=10).
-                // Kalau kita fill x sampai x+w, kita kena garis tetangga.
-                // Jadi fill sampai x+w-1.
-                
-                const finalW = leaf.width - 1;
-                const finalH = leaf.height - 1;
+                // Hitung koordinat lantai dalam (Inner Room)
+                const rX = leaf.x + wall; 
+                const rY = leaf.y + wall;
+                const rW = leaf.width - (wall * 2);
+                const rH = leaf.height - (wall * 2);
 
-                if (finalW >= 2 && finalH >= 2) {
+                // Gunakan rW/rH untuk validasi ukuran
+                if (rW >= 2 && rH >= 2) {
                     mapData.rooms.push({
                         id: room.id,
                         name: room.name,
                         type: room.type,
-                        x: leaf.x, y: leaf.y, width: leaf.width, height: leaf.height // Simpan data leaf mentah untuk koneksi
+                        x: leaf.x, y: leaf.y, width: leaf.width, height: leaf.height 
                     });
 
-                    // Render Floor
-                    for (let y = leaf.y; y < leaf.y + finalH; y++) {
-                        for (let x = leaf.x; x < leaf.x + finalW; x++) {
+                    // Render Floor: GUNAKAN rX, rY, rW, rH (Variable yang tadi error)
+                    // Bukan leaf.x lagi!
+                    for (let y = rY; y < rY + rH; y++) {
+                        for (let x = rX; x < rX + rW; x++) {
                             if (this.isValid(x, y, grid)) {
                                 grid[y][x] = 0; // Floor
                                 mapData.tiles.push({

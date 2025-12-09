@@ -285,11 +285,9 @@ export class StructuredGenerator implements IMapGenerator {
                 // 3. Proximity to Connections (GRAVITASI)
                 // Cari tetangga yang SUDAH ditempatkan
                 const neighbors = currentRoom.connections || [];
-                let hasPlacedNeighbor = false;
                 for (const nbId of neighbors) {
                     const nbLeaf = leaves.find(l => l.room && l.room.id === nbId);
                     if (nbLeaf) {
-                        hasPlacedNeighbor = true;
                         const dist = Math.abs(leaf.center.x - nbLeaf.center.x) + Math.abs(leaf.center.y - nbLeaf.center.y);
                         score -= dist * 2; // Tarik mendekat
                     }

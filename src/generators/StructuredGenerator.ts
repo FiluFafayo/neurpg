@@ -280,25 +280,26 @@ export class StructuredGenerator implements IMapGenerator {
 
     // --- Config & Helpers ---
 
-    // Helper to find connections count (quick & dirty fix passing connections count)
-    private getRoomDimensions(type: string, name: string, mapW: number, mapH: number, connectionsCount: number = 2): { w: number, h: number } {
+    // Helper to find connections count
+    // Note: _mapH pakai underscore biar TS gak rewel kalau gak kepake
+    private getRoomDimensions(type: string, name: string, mapW: number, _mapH: number, connectionsCount: number = 2): { w: number, h: number } {
         const t = type.toLowerCase();
+        const n = name.toLowerCase(); // Kita pakai ini sekarang!
         
         // Base Unit
         const U = 2; // 1 meter = 2 tiles
 
         if (t.includes('hall') || t.includes('corridor')) {
-             // Panjang lorong menyesuaikan jumlah koneksi. 
-             // Minimal 10 tile, Maksimal 80% map.
              let length = Math.max(10, connectionsCount * 4);
              if (length > mapW - 4) length = mapW - 6;
              return { w: length, h: 2 * U }; 
         }
         if (t.includes('living') || t.includes('common')) {
-             return { w: 12, h: 10 }; // 6m x 5m
+             return { w: 12, h: 10 };
         }
-        if (t.includes('master')) {
-             return { w: 10, h: 8 }; // 5m x 4m
+        // Cek 'n' juga biar "Master Bedroom" terdeteksi meski type-nya generic
+        if (t.includes('master') || n.includes('master')) {
+             return { w: 10, h: 8 };
         }
         if (t.includes('kitchen') || t.includes('dining')) {
              return { w: 8, h: 8 }; // 4m x 4m

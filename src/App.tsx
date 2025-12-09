@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { getWorker } from './workers/WorkerManager';
-import { GeminiDirector } from './generators/GeminiDirector';
 import { MapConfig } from './types/MapConfig';
 
 function App() {
@@ -9,7 +8,6 @@ function App() {
   const [isCalculating, setIsCalculating] = useState(false);
   
   // Gemini State
-  const [apiKey, setApiKey] = useState('AIzaSyCTF5nLyePtslUbcxWFe0Leqvg8XrYXl9A'); // Default Mock/Test Key
   const [prompt, setPrompt] = useState('A spooky haunted victorian mansion with a grand foyer and a hidden basement.');
   const [generatedConfig, setGeneratedConfig] = useState<MapConfig | null>(null);
 
@@ -19,7 +17,6 @@ function App() {
     
     try {
       const worker = getWorker();
-      // Calculate 5000 units (simulated heavy load)
       const result = await worker.generateHeavyMap(5000);
       setStatus(result);
     } catch (err) {
@@ -35,38 +32,45 @@ function App() {
   };
 
   const handleGenerate = async () => {
-      if (!apiKey) {
-          alert('Please enter a Gemini API Key');
+      if (!prompt) {
+          alert('Please enter a narrative prompt.');
           return;
       }
 
       setIsCalculating(true);
-      setStatus('Gemini is thinking...');
+      setStatus('AI Director is thinking...');
 
       try {
-          const director = new GeminiDirector(apiKey);
-          const config = await director.generateMapConfig(prompt);
+          const response = await fetch('/api/gemini', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ prompt }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'API request failed');
+          }
+
+          const config = await response.json() as MapConfig;
           
           setGeneratedConfig(config);
           setStatus(`Generated: ${config.type} - ${config.description}`);
           
           // Set Tone immediately
           setTone(config.tone);
-
-          // Select Algorithm (Strategy Pattern) via Web Worker
-          // const generator = GeneratorFactory.getGenerator(config.type);
-          // generator.generate(config);
           
           const worker = getWorker();
           const mapData = await worker.generateMap(config);
           
-          // Visualize in Phaser
-          // Dispatch event with data
           window.dispatchEvent(new CustomEvent('PHASER_DRAW_MAP', { detail: mapData }));
 
       } catch (err) {
           console.error(err);
-          setStatus('Generation Failed (Check Console)');
+          const errorMessage = err instanceof Error ? err.message : 'Generation Failed (Check Console)';
+          setStatus(errorMessage);
       } finally {
           setIsCalculating(false);
       }
@@ -90,17 +94,6 @@ function App() {
         boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
       }}>
         <h2 style={{margin: '0 0 10px 0', color: '#81c784'}}>Neuro-Symbolic Arch</h2>
-        
-        {/* API Key Input */}
-        <div style={{marginBottom: '10px'}}>
-            <label style={{fontSize: '0.8em', color: '#aaa'}}>Gemini API Key</label>
-            <input 
-                type="password" 
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                style={{width: '100%', padding: '5px', marginTop: '2px', background: '#333', border: '1px solid #555', color: 'white'}}
-            />
-        </div>
 
         {/* Prompt Input */}
         <div style={{marginBottom: '15px'}}>
@@ -108,7 +101,7 @@ function App() {
             <textarea 
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                rows={3}
+                rows={4}
                 style={{width: '100%', padding: '5px', marginTop: '2px', background: '#333', border: '1px solid #555', color: 'white', resize: 'vertical'}}
             />
         </div>

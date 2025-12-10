@@ -1,5 +1,3 @@
-// File: src/generators/StructuredGenerator.ts
-
 import { MapConfig, RoomConfig } from '../types/MapConfig';
 import { MapData } from '../types/MapData';
 import { IMapGenerator } from './MapGenerators';
@@ -19,10 +17,11 @@ class Rect {
     get top() { return this.y; }
     get bottom() { return this.y + this.h; }
     
+    // Titik pusat (Integer)
     get centerX() { return Math.floor(this.x + this.w/2); }
     get centerY() { return Math.floor(this.y + this.h/2); }
 
-    // Cek tabrakan dengan toleransi Zero (Strict)
+    // Strict Intersection (Padding 0 = Touch is OK, Overlap is NO)
     intersects(other: Rect, padding: number = 0): boolean {
         return (
             this.left < other.right + padding &&
@@ -36,7 +35,7 @@ class Rect {
 export class StructuredGenerator implements IMapGenerator {
 
     generate(config: MapConfig): MapData {
-        console.log(`[StructuredGenerator] Starting Smart Layout Generation...`);
+        console.log(`[StructuredGenerator] Analyzing Architecture Type...`);
         
         const mapData: MapData = {
             width: config.width,
@@ -49,34 +48,44 @@ export class StructuredGenerator implements IMapGenerator {
         const grid: number[][] = Array(config.height).fill(0).map(() => Array(config.width).fill(TERRAIN));
         const roomGrid: number[][] = Array(config.height).fill(0).map(() => Array(config.width).fill(-1));
 
-        // 2. Prepare Rects (Load dimensions from Config/AI)
+        // 2. Prepare Rects
         const allRects: Rect[] = config.rooms.map(room => {
             const dim = this.getRoomDimensions(room);
-            // Default position 0,0
             return new Rect(0, 0, dim.w, dim.h, room);
         });
 
-        // 3. Strategy Selector
-        // Cari ruangan yang cocok jadi "Spine" (Koridor panjang)
-        // Kriteria: Tipe corridor/hallway DAN punya koneksi banyak ATAU bentuknya panjang
-        const spineCandidate = allRects.find(r => 
-            (r.room.type.includes('corridor') || r.room.type.includes('hall')) && 
-            (r.room.connections.length > 1 || r.w > r.h * 2 || r.h > r.w * 2)
+        // 3. Smart Strategy Selector
+        // - Strategy A (Spine): Ada ruangan tipe "Corridor/Hallway"
+        // - Strategy B (Hub): Ada ruangan tipe "Living/Lobby/Foyer" yang koneksinya banyak (>2)
+        // - Strategy C (Cluster): Sisanya (Gubuk, Barak, Pos Jaga)
+        
+        const spineRoom = allRects.find(r => 
+            /corridor|hall|passage|gallery/i.test(r.room.type) || 
+            /corridor|hall|passage/i.test(r.room.name)
+        );
+
+        const hubRoom = allRects.find(r => 
+            (/living|common|lobby|foyer|main/i.test(r.room.type) || /living|common|lobby/i.test(r.room.name)) &&
+            r.room.connections.length >= 2
         );
 
         let placedRects: Rect[] = [];
 
-        if (spineCandidate) {
-            console.log(`[StructuredGenerator] Strategy: SPINE Layout (Anchor: ${spineCandidate.room.name})`);
-            placedRects = this.buildSpineLayout(spineCandidate, allRects, config.width, config.height);
-        } else {
-            console.log(`[StructuredGenerator] Strategy: HUB Layout (No Spine detected)`);
-            placedRects = this.buildHubLayout(allRects, config.width, config.height);
+        if (spineRoom) {
+            console.log(`[Gen] Strategy A: SPINE (Anchor: ${spineRoom.room.name})`);
+            placedRects = this.buildSpineLayout(spineRoom, allRects, config.width, config.height);
+        } 
+        else if (hubRoom) {
+            console.log(`[Gen] Strategy B: HUB (Anchor: ${hubRoom.room.name})`);
+            placedRects = this.buildHubLayout(hubRoom, allRects, config.width, config.height);
+        } 
+        else {
+            console.log(`[Gen] Strategy C: CLUSTER (Organic Packing)`);
+            placedRects = this.buildClusterLayout(allRects, config.width, config.height);
         }
 
-        // 4. Rasterize to Grid (Strict Integer Rendering)
+        // 4. Rasterize to Grid
         placedRects.forEach((r, idx) => {
-            // Safety Check Bounds
             const startX = Math.max(0, r.x);
             const startY = Math.max(0, r.y);
             const endX = Math.min(config.width, r.right);
@@ -85,11 +94,10 @@ export class StructuredGenerator implements IMapGenerator {
             for (let y = startY; y < endY; y++) {
                 for (let x = startX; x < endX; x++) {
                     grid[y][x] = FLOOR;
-                    roomGrid[y][x] = idx; // Gunakan index lokal
+                    roomGrid[y][x] = idx;
                 }
             }
             
-            // Register Metadata
             mapData.rooms.push({
                 id: r.room.id,
                 name: r.room.name,
@@ -99,121 +107,177 @@ export class StructuredGenerator implements IMapGenerator {
             });
         });
 
-        // 5. Generate Walls (Skinning)
+        // 5. Walls & Doors
         this.generateWalls(grid, roomGrid, config);
-
-        // 6. Generate Doors (Strict Logic)
         this.generateDoors(placedRects, grid, mapData);
 
-        // 7. Convert to Tiles
+        // 6. Tiles & Furniture
         this.generateTiles(grid, roomGrid, mapData, config);
-
-        // 8. Furnish
         this.furnishRooms(mapData, config, grid);
 
         return mapData;
     }
 
-    // --- LAYOUT STRATEGIES ---
+    // ================= STRATEGIES =================
 
+    // STRATEGY A: THE SPINE (Mansion, School, Hotel)
+    // Fokus: Koridor lurus, ruangan nempel di kiri/kanan/atas/bawah koridor.
     private buildSpineLayout(spine: Rect, allRects: Rect[], mapW: number, mapH: number): Rect[] {
         const placed: Rect[] = [];
         const placedIds = new Set<string>();
 
-        // 1. Place Spine in Center
+        // Center Spine
         spine.x = Math.floor((mapW - spine.w) / 2);
         spine.y = Math.floor((mapH - spine.h) / 2);
         placed.push(spine);
         placedIds.add(spine.room.id);
 
-        // 2. Identify Children connected to Spine
-        // Prioritize rooms connected directly to the spine
-        const children = allRects.filter(r => 
-            !placedIds.has(r.room.id) && 
-            spine.room.connections.includes(r.room.id)
-        );
-
-        // Sort children by size (Largest first helps packing)
-        children.sort((a, b) => (b.w * b.h) - (a.w * a.h));
-
-        // 3. Place Rooms along the Spine
-        // We will try to place them on Top, Bottom, Left, Right
-        // Maintain "cursor" for packing tight
-        // Simple logic: Alternate Top/Bottom
-        
-        // Define anchor points relative to spine
-        // A simple 1D packing along the spine's long axis would be ideal if spine is horz
+        // Determine Spine Axis (Horizontal vs Vertical)
         const isHorizontal = spine.w >= spine.h;
         
-        // Cursors for packing
-        let currentX_Top = spine.x;
-        let currentX_Bot = spine.x;
-        let currentY_Left = spine.y;
-        let currentY_Right = spine.y;
+        // Children connected to Spine
+        const children = allRects.filter(r => !placedIds.has(r.room.id) && spine.room.connections.includes(r.room.id));
+        
+        // Sort children by size for better packing
+        children.sort((a, b) => b.w * b.h - a.w * a.h);
 
-        children.forEach((child, index) => {
-            let bestX = 0, bestY = 0;
-            let found = false;
+        let cursorTop = spine.x;
+        let cursorBottom = spine.x;
+        let cursorLeft = spine.y;
+        let cursorRight = spine.y;
 
+        children.forEach((child, i) => {
+            let px = 0, py = 0;
             if (isHorizontal) {
-                // Try Top Side first, then Bottom
-                if (index % 2 === 0) {
-                    // Place Top
-                    bestX = currentX_Top;
-                    bestY = spine.y - child.h; // Snap to top edge
-                    currentX_Top += child.w; // Move cursor
-                } else {
-                    // Place Bottom
-                    bestX = currentX_Bot;
-                    bestY = spine.bottom; // Snap to bottom edge
-                    currentX_Bot += child.w; //ZW Move cursor
+                // Alternate Top/Bottom
+                if (i % 2 === 0) { // Top
+                    px = cursorTop;
+                    py = spine.y - child.h;
+                    cursorTop += child.w;
+                } else { // Bottom
+                    px = cursorBottom;
+                    py = spine.bottom;
+                    cursorBottom += child.w;
                 }
-                found = true;
             } else {
-                // Vertical Spine
-                if (index % 2 === 0) {
-                    // Place Left
-                    bestX = spine.x - child.w;
-                    bestY = currentY_Left;
-                    currentY_Left += child.h;
-                } else {
-                    // Place Right
-                    bestX = spine.right;
-                    bestY = currentY_Right;
-                    currentY_Right += child.h;
+                // Alternate Left/Right
+                if (i % 2 === 0) { // Left
+                    px = spine.x - child.w;
+                    py = cursorLeft;
+                    cursorLeft += child.h;
+                } else { // Right
+                    px = spine.right;
+                    py = cursorRight;
+                    cursorRight += child.h;
                 }
-                found = true;
             }
-
-            if (found) {
-                child.x = bestX;
-                child.y = bestY;
-                
-                // Collision Check (Just in case)
-                if (!this.checkCollision(child, placed)) {
-                    placed.push(child);
-                    placedIds.add(child.room.id);
-                } else {
-                    // Fallback: Try to find ANY spot around the spine
-                    // (Simple radial search or bounding box expansion could go here)
-                    console.warn(`[Structured] Could not fit ${child.room.name} perfectly alongside spine.`);
-                }
+            
+            child.x = px;
+            child.y = py;
+            
+            if (!this.checkCollision(child, placed)) {
+                placed.push(child);
+                placedIds.add(child.room.id);
             }
         });
 
-        // 4. Place Grandchildren (Rooms connected to the rooms we just placed)
-        // Simple Recursive Snap
-        let stuckCounter = 0;
-        while (placed.length < allRects.length && stuckCounter < 100) {
+        // Handle leftovers (Grandchildren)
+        this.placeLeftovers(allRects, placed, placedIds);
+        return placed;
+    }
+
+    // STRATEGY B: THE HUB (Modern House, Apartment)
+    // Fokus: Ruang tengah besar (Living Room), ruangan lain nempel memutar.
+    private buildHubLayout(hub: Rect, allRects: Rect[], mapW: number, mapH: number): Rect[] {
+        const placed: Rect[] = [];
+        const placedIds = new Set<string>();
+
+        // Center Hub
+        hub.x = Math.floor((mapW - hub.w) / 2);
+        hub.y = Math.floor((mapH - hub.h) / 2);
+        placed.push(hub);
+        placedIds.add(hub.room.id);
+
+        const children = allRects.filter(r => !placedIds.has(r.room.id) && hub.room.connections.includes(r.room.id));
+        
+        // Place tightly around Hub
+        for (const child of children) {
+            const pos = this.findTightSnapPosition(hub, child, placed);
+            if (pos) {
+                child.x = pos.x;
+                child.y = pos.y;
+                placed.push(child);
+                placedIds.add(child.room.id);
+            }
+        }
+
+        this.placeLeftovers(allRects, placed, placedIds);
+        return placed;
+    }
+
+    // STRATEGY C: THE CLUSTER (Cabin, Witch Hut, Barracks)
+    // Fokus: Organic Blob. Cari ruangan terbesar (sebagai anchor) tapi tempelnya serampangan/padat.
+    private buildClusterLayout(allRects: Rect[], mapW: number, mapH: number): Rect[] {
+        if (allRects.length === 0) return [];
+
+        const placed: Rect[] = [];
+        const placedIds = new Set<string>();
+
+        // 1. Pick Anchor (Largest Room usually)
+        allRects.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+        const anchor = allRects[0];
+        
+        anchor.x = Math.floor((mapW - anchor.w) / 2);
+        anchor.y = Math.floor((mapH - anchor.h) / 2);
+        placed.push(anchor);
+        placedIds.add(anchor.room.id);
+
+        // 2. Linear/Blob Chain
+        // Berbeda dengan Hub yg radial, Cluster ini mencoba menempel ke ruangan TERAKHIR yg dipasang (Chain)
+        // atau ke ruangan mana saja yang dekat (Blob), menciptakan bentuk yang lebih tidak beraturan.
+        
+        const queue = allRects.filter(r => !placedIds.has(r.room.id));
+        
+        for (const child of queue) {
+            // Coba tempel ke Anchor dulu, kalau penuh tempel ke yang lain (Blob growth)
+            // Kita acak target parent dari yang sudah placed untuk efek organik
+            const possibleParents = [...placed].sort(() => Math.random() - 0.5);
+            
+            let placedChild = false;
+            for (const parent of possibleParents) {
+                const pos = this.findTightSnapPosition(parent, child, placed);
+                if (pos) {
+                    child.x = pos.x;
+                    child.y = pos.y;
+                    placed.push(child);
+                    placedIds.add(child.room.id);
+                    placedChild = true;
+                    break;
+                }
+            }
+            
+            if (!placedChild) {
+                console.warn(`[Cluster] Skipped orphaned room: ${child.room.name}`);
+            }
+        }
+
+        return placed;
+    }
+
+    // ================= HELPERS =================
+
+    private placeLeftovers(allRects: Rect[], placed: Rect[], placedIds: Set<string>) {
+        let stuck = 0;
+        while (placed.length < allRects.length && stuck < 50) {
             const unplaced = allRects.filter(r => !placedIds.has(r.room.id));
             if (unplaced.length === 0) break;
-
+            
             let progress = false;
             for (const child of unplaced) {
-                // Find a parent in placed list
+                // Try to connect to valid parent
                 const parent = placed.find(p => child.room.connections.includes(p.room.id));
                 if (parent) {
-                    const pos = this.findSnapPosition(parent, child, placed);
+                    const pos = this.findTightSnapPosition(parent, child, placed);
                     if (pos) {
                         child.x = pos.x;
                         child.y = pos.y;
@@ -223,73 +287,33 @@ export class StructuredGenerator implements IMapGenerator {
                     }
                 }
             }
-            if (!progress) stuckCounter++;
+            if (!progress) stuck++;
         }
-
-        return placed;
     }
 
-    private buildHubLayout(allRects: Rect[], mapW: number, mapH: number): Rect[] {
-        // Strategy: Place the biggest room (Hub) in center, spiral others around it
-        const placed: Rect[] = [];
-        const placedIds = new Set<string>();
-
-        // 1. Find Hub (Most connected or Largest)
-        allRects.sort((a, b) => b.room.connections.length - a.room.connections.length);
-        const hub = allRects[0];
-
-        hub.x = Math.floor((mapW - hub.w) / 2);
-        hub.y = Math.floor((mapH - hub.h) / 2);
-        placed.push(hub);
-        placedIds.add(hub.room.id);
-
-        // 2. Spiral Placement for the rest
-        const queue = allRects.filter(r => !placedIds.has(r.room.id));
+    private findTightSnapPosition(parent: Rect, child: Rect, obstacles: Rect[]): {x: number, y: number} | null {
+        // Urutan prioritas posisi tempel:
+        // 1. Tengah Sisi (Centered)
+        // 2. Pojok Sisi (Corner alignment)
         
-        for (const child of queue) {
-            // Find parent to snap to
-            let parent = placed.find(p => child.room.connections.includes(p.room.id));
-            if (!parent) parent = placed[0]; // Fallback to hub
-
-            const pos = this.findSnapPosition(parent, child, placed);
-            if (pos) {
-                child.x = pos.x;
-                child.y = pos.y;
-                placed.push(child);
-                placedIds.add(child.room.id);
-            } else {
-                console.warn(`[Hub] Failed to place ${child.room.name}`);
-            }
-        }
-
-        return placed;
-    }
-
-    // --- UTILS ---
-
-    private findSnapPosition(parent: Rect, child: Rect, obstacles: Rect[]): {x: number, y: number} | null {
-        // Try 4 sides of parent
         const candidates = [
-            { x: parent.x + (parent.w - child.w)/2, y: parent.y - child.h }, // Top (Centered)
-            { x: parent.x + (parent.w - child.w)/2, y: parent.bottom },     // Bottom (Centered)
-            { x: parent.x - child.w, y: parent.y + (parent.h - child.h)/2 }, // Left (Centered)
-            { x: parent.right, y: parent.y + (parent.h - child.h)/2 },       // Right (Centered)
-            // Align Corners (Secondary)
-            { x: parent.x, y: parent.y - child.h }, // Top-Left
-            { x: parent.right - child.w, y: parent.y - child.h } // Top-Right
+            // Centered Sides
+            { x: parent.centerX - Math.floor(child.w/2), y: parent.y - child.h }, // Top
+            { x: parent.centerX - Math.floor(child.w/2), y: parent.bottom },      // Bottom
+            { x: parent.x - child.w, y: parent.centerY - Math.floor(child.h/2) }, // Left
+            { x: parent.right, y: parent.centerY - Math.floor(child.h/2) },       // Right
+            
+            // Corner Alignments (Top-Left, Top-Right, etc)
+            { x: parent.x, y: parent.y - child.h }, // Top-Align Left
+            { x: parent.right - child.w, y: parent.y - child.h }, // Top-Align Right
+            { x: parent.x, y: parent.bottom }, // Bottom-Align Left
+            { x: parent.right - child.w, y: parent.bottom } // Bottom-Align Right
         ];
 
         for (const pos of candidates) {
-            // Integer snap
-            pos.x = Math.floor(pos.x);
-            pos.y = Math.floor(pos.y);
-
             child.x = pos.x;
             child.y = pos.y;
-            
-            if (!this.checkCollision(child, obstacles)) {
-                return pos;
-            }
+            if (!this.checkCollision(child, obstacles)) return pos;
         }
         return null;
     }
@@ -297,64 +321,37 @@ export class StructuredGenerator implements IMapGenerator {
     private checkCollision(rect: Rect, others: Rect[]): boolean {
         for (const other of others) {
             if (rect.room.id === other.room.id) continue;
-            // Strict overlap check (padding 0)
+            // Strict 0-padding intersection check
             if (rect.intersects(other, 0)) return true;
         }
         return false;
     }
 
     private getRoomDimensions(config: RoomConfig): { w: number, h: number } {
-        // Priority 1: AI Config
-        if (config.width && config.height) {
-            return { w: Math.floor(config.width), h: Math.floor(config.height) };
-        }
+        // Priority: AI Config
+        if (config.width && config.height) return { w: Math.floor(config.width), h: Math.floor(config.height) };
         
-        // Priority 2: Fallback Defaults
         const t = config.type.toLowerCase();
-        if (t.includes('hall') || t.includes('corridor')) return { w: 10, h: 2 }; // Default corridor
-        if (t.includes('living') || t.includes('ballroom')) return { w: 10, h: 8 };
-        if (t.includes('master')) return { w: 8, h: 6 };
-        if (t.includes('kitchen')) return { w: 6, h: 6 };
-        if (t.includes('bath') || t.includes('wc')) return { w: 3, h: 3 };
-        
-        return { w: 6, h: 6 }; // Generic
+        if (/corridor|hall|passage/.test(t)) return { w: 10, h: 2 };
+        if (/living|ballroom|common/.test(t)) return { w: 10, h: 8 };
+        if (/master/.test(t)) return { w: 8, h: 6 };
+        if (/kitchen|dining/.test(t)) return { w: 6, h: 6 };
+        if (/bath|wc|toilet/.test(t)) return { w: 3, h: 3 };
+        return { w: 5, h: 5 };
     }
 
     private generateWalls(grid: number[][], roomGrid: number[][], config: MapConfig) {
         for (let y = 0; y < config.height; y++) {
             for (let x = 0; x < config.width; x++) {
                 if (grid[y][x] === FLOOR) {
-                    // Check neighbors
                     const dirs = [[0,-1], [0,1], [-1,0], [1,0]];
                     for (const [dx, dy] of dirs) {
                         const nx = x + dx;
                         const ny = y + dy;
-                        
-                        // Bounds check
                         if (nx < 0 || ny < 0 || nx >= config.width || ny >= config.height) continue;
-
-                        const neighborVal = grid[ny][nx];
-                        const currentRoom = roomGrid[y][x];
-                        const neighborRoom = roomGrid[ny][nx];
-
-                        // Wall logic:
-                        // 1. Border with TERRAIN (Outside)
-                        if (neighborVal === TERRAIN) {
-                            grid[y][x] = WALL; // Convert outer floor to wall
-                        }
-                        // 2. Border with DIFFERENT ROOM (Internal Wall)
-                        else if (neighborVal === FLOOR && currentRoom !== neighborRoom) {
-                            // Only draw wall on ONE side to avoid double walls
-                            // Prefer drawing on Top or Left side of the boundary
-                            if (x < nx || y < ny) {
-                                // grid[y][x] = WALL; // Optional: Thick walls?
-                                // For now, let's keep internal borders as floors but maybe change visual later?
-                                // Actually, standard RPG maps usually have walls between rooms.
-                                // Let's try converting to WALL.
-                                // But strictly, collision logic needs it.
-                                // Let's keep it simple: Dinding hanya di tepi luar ruangan.
-                            }
-                        }
+                        
+                        // Wall jika tetangga adalah Terrain (Void)
+                        if (grid[ny][nx] === TERRAIN) grid[y][x] = WALL;
                     }
                 }
             }
@@ -362,77 +359,58 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private generateDoors(placedRects: Rect[], grid: number[][], mapData: MapData) {
-        // Simple Door Logic: Find shared edges between connected rooms
         placedRects.forEach(rA => {
             rA.room.connections.forEach(connId => {
                 const rB = placedRects.find(p => p.room.id === connId);
-                if (rB) {
-                    this.carveDoor(rA, rB, grid, mapData);
-                }
+                if (rB) this.carveDoor(rA, rB, grid, mapData);
             });
         });
     }
 
     private carveDoor(rA: Rect, rB: Rect, grid: number[][], mapData: MapData) {
-        // Find intersection rect (overlap or touching)
-        // Since we use strict packing, they touch at edges.
-        
-        // Horizontal Edge Touch?
-        // rA Bottom == rB Top OR rA Top == rB Bottom
-        const touchY = (rA.bottom === rB.y) ? rA.bottom : (rA.y === rB.bottom ? rA.y : null);
-        
-        if (touchY !== null) {
-            // Horizontal overlap range
-            const startX = Math.max(rA.x, rB.x);
-            const endX = Math.min(rA.right, rB.right);
-            const overlap = endX - startX;
-            
-            if (overlap >= 2) {
-                // Carve center of overlap
-                const doorX = Math.floor(startX + overlap/2);
-                // Carve 2 tiles (User requirement: 2 tiles wide)
-                this.setDoor(doorX, touchY - 1, grid); // A side
-                this.setDoor(doorX, touchY, grid);     // B side
-                
-                // Add Door Metadata
-                this.addDoorMeta(mapData, rA.room.id, doorX, touchY);
-                this.addDoorMeta(mapData, rB.room.id, doorX, touchY);
-                return;
-            }
-        }
+        // Find Overlap Range
+        const intersectX_Start = Math.max(rA.x, rB.x);
+        const intersectX_End = Math.min(rA.right, rB.right);
+        const intersectY_Start = Math.max(rA.y, rB.y);
+        const intersectY_End = Math.min(rA.bottom, rB.bottom);
 
-        // Vertical Edge Touch?
-        const touchX = (rA.right === rB.x) ? rA.right : (rA.x === rB.right ? rA.x : null);
-        
-        if (touchX !== null) {
-            const startY = Math.max(rA.y, rB.y);
-            const endY = Math.min(rA.bottom, rB.bottom);
-            const overlap = endY - startY;
+        // Logic: Pintu dibuat di tengah area yang bersentuhan
+        // Vertical touch (Atas/Bawah)
+        if (intersectX_End - intersectX_Start >= 2 && (rA.bottom === rB.y || rA.y === rB.bottom)) {
+            const dx = Math.floor((intersectX_Start + intersectX_End) / 2) - 1; // Center - 1
+            const dy = (rA.bottom === rB.y) ? rA.bottom - 1 : rA.y; // The wall line
             
-            if (overlap >= 2) {
-                const doorY = Math.floor(startY + overlap/2);
-                this.setDoor(touchX - 1, doorY, grid);
-                this.setDoor(touchX, doorY, grid);
-                
-                this.addDoorMeta(mapData, rA.room.id, touchX, doorY);
-                this.addDoorMeta(mapData, rB.room.id, touchX, doorY);
-            }
+            // Buka 2 tile (Door & Door+1)
+            this.setDoor(dx, dy, grid);
+            this.setDoor(dx+1, dy, grid);
+            
+            // Metadata
+            this.addDoorMeta(mapData, rA.room.id, dx, dy);
+        }
+        
+        // Horizontal touch (Kiri/Kanan)
+        if (intersectY_End - intersectY_Start >= 2 && (rA.right === rB.x || rA.x === rB.right)) {
+            const dy = Math.floor((intersectY_Start + intersectY_End) / 2) - 1;
+            const dx = (rA.right === rB.x) ? rA.right - 1 : rA.x;
+            
+            this.setDoor(dx, dy, grid);
+            this.setDoor(dx, dy+1, grid);
+
+            this.addDoorMeta(mapData, rA.room.id, dx, dy);
         }
     }
 
     private setDoor(x: number, y: number, grid: number[][]) {
         if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
-            // Ensure we don't overwrite walls if we don't want to, 
-            // but doors usually replace walls or floors.
-            grid[y][x] = DOOR; 
+            grid[y][x] = DOOR;
         }
     }
 
     private addDoorMeta(mapData: MapData, roomId: string, x: number, y: number) {
-        const room = mapData.rooms.find(r => r.id === roomId);
-        if (room) {
-            if (!room.doors) room.doors = [];
-            room.doors.push({ x, y });
+        const r = mapData.rooms.find(rm => rm.id === roomId);
+        if (r) {
+            if(!r.doors) r.doors = [];
+            r.doors.push({x, y});
         }
     }
 
@@ -441,25 +419,18 @@ export class StructuredGenerator implements IMapGenerator {
             for (let x = 0; x < config.width; x++) {
                 const val = grid[y][x];
                 const rIdx = roomGrid[y][x];
-
-                // Base terrain
+                
+                // Base
                 mapData.tiles.push({ x, y, sprite: 'grass', layer: 'floor' });
 
                 if (val === WALL) {
                     mapData.tiles.push({ x, y, sprite: 'wall_brick', layer: 'wall' });
-                } 
-                else if (val === FLOOR || val === DOOR) {
-                    let floorSprite = 'floor_common';
+                } else if (val === FLOOR || val === DOOR) {
+                    let sprite = 'floor_common';
                     if (rIdx !== -1) {
-                         const roomType = config.rooms[rIdx].type;
-                         floorSprite = this.getFloorSprite(roomType);
+                        sprite = this.getFloorSprite(config.rooms[rIdx].type);
                     }
-                    mapData.tiles.push({ x, y, sprite: floorSprite, layer: 'floor' });
-                    
-                    if (val === DOOR) {
-                         // Optional: Door sprite on top
-                         // mapData.tiles.push({ x, y, sprite: 'door_wood', layer: 'furniture' });
-                    }
+                    mapData.tiles.push({ x, y, sprite, layer: 'floor' });
                 }
             }
         }
@@ -467,17 +438,17 @@ export class StructuredGenerator implements IMapGenerator {
 
     private getFloorSprite(type: string): string {
         const t = type.toLowerCase();
-        if (t.includes('kitchen')) return 'floor_kitchen';
-        if (t.includes('bath')) return 'floor_bathroom';
-        if (t.includes('corridor') || t.includes('hall')) return 'floor_hallway';
+        if (/kitchen/.test(t)) return 'floor_kitchen';
+        if (/bath|toilet/.test(t)) return 'floor_bathroom';
+        if (/corridor|hall/.test(t)) return 'floor_hallway';
         return 'floor_common';
     }
 
     private furnishRooms(mapData: MapData, config: MapConfig, grid: number[][]) {
         mapData.rooms.forEach(room => {
             const cfg = config.rooms.find(r => r.id === room.id);
-            if (cfg) {
-                ConstraintSolver.placeItems(room, cfg.furniture || [], mapData, grid, FLOOR); 
+            if (cfg && cfg.furniture) {
+                ConstraintSolver.placeItems(room, cfg.furniture, mapData, grid, FLOOR);
             }
         });
     }

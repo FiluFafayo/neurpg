@@ -72,15 +72,20 @@ class ServerlessGeminiDirector {
       }
       
       ARCHITECTURAL RULES (STRICT):
-      1. For 'structured' maps (Mansions, Schools, Offices): You MUST create a 'Spine' or 'Hub' layout. 
-         - Establish a central 'corridor' or 'hallway' early.
-         - Connect rooms to the corridor, NOT randomly to each other.
-         - Avoid cycles (A->B->C->A) unless it's a loop corridor.
-      2. 'width' and 'height' of rooms MUST be integers.
-         - Corridors: Long and thin (e.g., 15x2 or 2x15).
-         - Halls/Living Rooms: Large (e.g., 10x10).
-         - Bedrooms/Kitchens: Medium (e.g., 5x5 to 8x8).
-         - Bathrooms: Small (e.g., 3x3).
+      1. LAYOUT STRATEGY (CRITICAL):
+         - **MANSION/SCHOOL/OFFICE/HOTEL**: You MUST use a **"SPINE"** layout.
+           - Create a central room named exactly "Main Corridor" or "Hallway" (Type: 'corridor').
+           - This corridor must be LONG (e.g., width 20, height 2).
+           - Connect all other rooms to this Corridor.
+         - **MODERN HOUSE/APARTMENT**: You MUST use a **"HUB"** layout.
+           - Create a central room named "Living Room" or "Lobby" (Type: 'common').
+           - Connect Bedroom, Kitchen, etc., directly to this Hub.
+         - **CABIN/HUT**: Use "Cluster" layout (one big room + small partitions).
+      
+      2. DIMENSION RULES:
+         - **'width' and 'height' are MANDATORY.**
+         - Corridors: Must be long/thin (e.g., 15x2, 20x3).
+         - Rooms: Integers only (e.g., 6x6, 8x5).
     `;
 
     let lastError: any = null;

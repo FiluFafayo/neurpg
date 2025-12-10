@@ -63,23 +63,7 @@ export class MainScene extends Phaser.Scene {
         color: '#aaaaaa'
     });
 
-    // Draw Debug Grid (Attached to Map Container so it moves/zooms with the map)
-    const gridGraphics = this.add.graphics();
-    gridGraphics.lineStyle(1, 0xff0000, 0.3);
-    
-    // Draw massive grid (e.g., 100x100 tiles)
-    const gridSize = 100 * 32;
-    for (let x = 0; x <= gridSize; x += 32) {
-      gridGraphics.moveTo(x, 0);
-      gridGraphics.lineTo(x, gridSize);
-    }
-    for (let y = 0; y <= gridSize; y += 32) {
-      gridGraphics.moveTo(0, y);
-      gridGraphics.lineTo(gridSize, y);
-    }
-    gridGraphics.strokePath();
-    this.mapContainer.add(gridGraphics); // Inject into container!
-    this.mapContainer.sendToBack(gridGraphics);
+    // Grid drawing logic moved to renderMap() to persist after regeneration.
 
     this.add.text(16, 16, 'Phaser Initialized\nNeuro-Symbolic Engine Ready', {
       fontSize: '18px',
@@ -281,6 +265,25 @@ export class MainScene extends Phaser.Scene {
       // Clear previous map
       this.mapContainer.removeAll(true);
       this.floorBlitter.clear();
+
+      // Draw Debug Grid (Dynamic based on Map Size)
+      const gridGraphics = this.add.graphics();
+      gridGraphics.lineStyle(1, 0xff0000, 0.2); // Red, fainter
+      
+      const mapW = mapData.width * 32;
+      const mapH = mapData.height * 32;
+
+      for (let x = 0; x <= mapW; x += 32) {
+        gridGraphics.moveTo(x, 0);
+        gridGraphics.lineTo(x, mapH);
+      }
+      for (let y = 0; y <= mapH; y += 32) {
+        gridGraphics.moveTo(0, y);
+        gridGraphics.lineTo(mapW, y);
+      }
+      gridGraphics.strokePath();
+      this.mapContainer.add(gridGraphics);
+      this.mapContainer.sendToBack(gridGraphics);
       
       const TILE_SIZE = 32;
 

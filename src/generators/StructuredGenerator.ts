@@ -1,4 +1,3 @@
-// src/generators/StructuredGenerator.ts
 import { MapConfig, RoomConfig } from '../types/MapConfig';
 import { MapData } from '../types/MapData';
 import { IMapGenerator } from './MapGenerators';
@@ -89,15 +88,10 @@ export class StructuredGenerator implements IMapGenerator {
 
             for (const child of queue) {
                 // Cari parent terbaik untuk ditempel
-                // Kita cari parent yang ada di list koneksi dia. Kalau gak ada, tempel ke Hub terdekat.
                 let potentialParents = placedRooms.filter(p => child.room.connections.includes(p.room.id));
                 if (potentialParents.length === 0) potentialParents = placedRooms; // Fallback snap to anything
 
                 // ALGORITMA COMPACT SNAPPING
-                // Coba tempelkan di sekeliling parent, pilih posisi yang:
-                // 1. Valid (gak tabrakan)
-                // 2. Contact Score tertinggi (paling banyak nempel sama ruangan lain) -> Bikin rapet
-                
                 let bestPos = null;
                 let maxContact = -1;
 
@@ -111,8 +105,6 @@ export class StructuredGenerator implements IMapGenerator {
                         // Cek Tabrakan
                         let collision = false;
                         for (const existing of placedRooms) {
-                            // Gunakan padding -1 agar boleh nempel (shared wall), tapi gak boleh overlap dalam
-                            // Kita pakai logika grid nanti buat dinding, jadi overlap 0 is fine (touching).
                             if (child.intersects(existing, -1)) { // Negative padding = allow touching edges
                                 collision = true; 
                                 break;
@@ -120,7 +112,7 @@ export class StructuredGenerator implements IMapGenerator {
                         }
                         if (collision) continue;
 
-                        // Hitung Contact Score (Seberapa banyak sisi yang nempel sama existing rooms)
+                        // Hitung Contact Score
                         const contact = this.calculateContact(child, placedRooms);
                         if (contact > maxContact) {
                             maxContact = contact;
@@ -136,7 +128,7 @@ export class StructuredGenerator implements IMapGenerator {
                     placedIds.add(child.room.id);
                     placedSomething = true;
                     stuckCount = 0;
-                    break; // Pindah ke iterasi while berikutnya biar prioritas urut lagi
+                    break; 
                 }
             }
 
@@ -172,35 +164,25 @@ export class StructuredGenerator implements IMapGenerator {
                 const current = grid[y][x];
                 const currentRoom = roomGrid[y][x];
 
-                // Jika ini Lantai, cek apakah butuh dinding di sekitarnya (karena dia pinggir)
                 if (current === FLOOR) {
-                    // Cek 4 arah
                     const dirs = [[0,-1], [0,1], [-1,0], [1,0]];
-                    let isEdge = false;
 
                     for (const [dx, dy] of dirs) {
                         const nx = x + dx;
                         const ny = y + dy;
                         
                         if (!this.isValid(nx, ny, grid)) {
-                            isEdge = true; // Pinggir map
+                            // Pinggir map, biarkan floor
                         } else {
                             const neighbor = grid[ny][nx];
                             const neighborRoom = roomGrid[ny][nx];
 
                             // External Wall: Lantai ketemu Tanah
                             if (neighbor === TERRAIN) {
-                                // Kita ubah TILE INI jadi dinding? 
-                                // TIDAK. Kalau tile ini jadi dinding, ruangannya mengecil.
-                                // Strategi RPG Maker: Dinding makan 1 tile.
-                                // Kita set tile ini jadi WALL.
                                 grid[y][x] = WALL; 
-                                isEdge = true;
                             } 
                             // Internal Wall: Lantai ketemu Lantai ruangan LAIN
                             else if (neighbor === FLOOR && neighborRoom !== -1 && neighborRoom !== currentRoom) {
-                                // Shared wall. Salah satu harus mengalah jadi dinding.
-                                // Biasanya kita prioritaskan koordinat lebih kecil atau ID lebih kecil.
                                 if (x < nx || y < ny) {
                                     grid[y][x] = WALL;
                                 }
@@ -212,7 +194,6 @@ export class StructuredGenerator implements IMapGenerator {
         }
 
         // 8. Generate Doors (Carve Walls)
-        // Cari dinding yang memisahkan dua ruangan yang terhubung secara logika
         placedRooms.forEach(rA => {
             rA.room.connections.forEach(targetId => {
                 const rB = placedRooms.find(r => r.room.id === targetId);
@@ -226,13 +207,12 @@ export class StructuredGenerator implements IMapGenerator {
                 const val = grid[y][x];
                 const roomId = roomGrid[y][x];
                 
-                // Background Terrain (Always draw grass underneath)
+                // Background Terrain
                 mapData.tiles.push({ x, y, sprite: 'grass', layer: 'floor' });
 
                 if (val === WALL) {
                     mapData.tiles.push({ x, y, sprite: 'wall_brick', layer: 'wall' });
                 } else if (val === FLOOR || val === DOOR) {
-                    // Cari tipe lantai berdasarkan room type
                     let floorSprite = 'floor_common';
                     if (roomId !== -1) {
                         const rType = config.rooms[roomId] ? config.rooms[roomId].type : 'common';
@@ -251,13 +231,9 @@ export class StructuredGenerator implements IMapGenerator {
 
     // --- Helpers ---
 
-    private getSnapPositions(parent: Rect, child: Rect, mapW: number, mapH: number): {x: number, y: number}[] {
+    private getSnapPositions(parent: Rect, child: Rect, _mapW: number, _mapH: number): {x: number, y: number}[] {
         const res: {x: number, y: number}[] = [];
-        // Coba tempel di 4 sisi parent, geser-geser sepanjang sisi itu
-        
-        // Top Edge (child duduk di atas parent)
-        // y = parent.y - child.h
-        // x geser dari parent.x - child.w + 1 sampai parent.right - 1
+        // Top Edge
         const yTop = parent.y - child.h;
         for (let x = parent.x - child.w + 2; x < parent.right - 1; x++) res.push({x, y: yTop});
 
@@ -278,13 +254,9 @@ export class StructuredGenerator implements IMapGenerator {
 
     private calculateContact(rect: Rect, others: Rect[]): number {
         let contactPixels = 0;
-        // Approximation: Perimeter yang bersentuhan
-        // Kita bisa cek apakah edges berhimpitan
-        // Simplifikasi: Cek overlap dengan rect yang sedikit diperbesar
         const expanded = new Rect(rect.x - 1, rect.y - 1, rect.w + 2, rect.h + 2, rect.room);
         
         for (const other of others) {
-            // Hitung intersection area antara expanded rect dan other
             const ix = Math.max(expanded.x, other.x);
             const iy = Math.max(expanded.y, other.y);
             const iw = Math.min(expanded.right, other.right) - ix;
@@ -298,36 +270,27 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private makeDoor(rA: Rect, rB: Rect, grid: number[][], mapData: MapData) {
-        // Cari area irisan yang merupakan WALL
-        // Irisan visual (expanded by 1)
         const x1 = Math.max(rA.x, rB.x);
         const y1 = Math.max(rA.y, rB.y);
         const x2 = Math.min(rA.right, rB.right);
         const y2 = Math.min(rA.bottom, rB.bottom);
 
-        // Jika mereka bersentuhan, bounding box intersection-nya akan tipis (width 0 atau height 0 dalam logika Rect murni)
-        // Tapi karena kita snap di koordinat integer, kita cek grid.
-        
-        // Scan area perbatasan
         const cx = Math.floor((x1+x2)/2);
         const cy = Math.floor((y1+y2)/2);
         
-        // Cek radius kecil di sekitar center intersection
         for(let dy=-1; dy<=1; dy++) {
             for(let dx=-1; dx<=1; dx++) {
                 const px = cx+dx;
                 const py = cy+dy;
                 if (this.isValid(px, py, grid) && grid[py][px] === WALL) {
-                    // FOUND WALL BETWEEN ROOMS. CARVE IT.
                     grid[py][px] = DOOR;
                     
-                    // Add metadata
                     const rDataA = mapData.rooms.find(r => r.id === rA.room.id);
                     const rDataB = mapData.rooms.find(r => r.id === rB.room.id);
                     if(rDataA) rDataA.doors?.push({x: px, y: py});
                     if(rDataB) rDataB.doors?.push({x: px, y: py});
                     
-                    return; // Satu pintu cukup per koneksi
+                    return; 
                 }
             }
         }
@@ -338,24 +301,19 @@ export class StructuredGenerator implements IMapGenerator {
             const cfg = config.rooms.find(r => r.id === room.id);
             if (cfg) {
                 let items = cfg.furniture || [];
-                // Constraint solver needs floor value
                 ConstraintSolver.placeItems(room, items, mapData, grid, FLOOR); 
             }
         });
     }
 
-    private getRoomDimensions(type: string, name: string, mapW: number, _mapH: number, connectionsCount: number = 2): { w: number, h: number } {
+    private getRoomDimensions(type: string, name: string, _mapW: number, _mapH: number, connectionsCount: number = 2): { w: number, h: number } {
         const t = type.toLowerCase();
         const n = name.toLowerCase();
-        
-        // Standard D&D 5ft sq scale. 
-        // 6 tiles = 30ft = Kamar besar.
-        // 4 tiles = 20ft = Kamar sedang.
         
         if (t.includes('hall') || t.includes('corridor')) {
              let len = Math.max(6, connectionsCount * 2); 
              if (len > 15) len = 15;
-             return { w: len, h: 2 }; // Lorong 2 tile (10ft) lebar
+             return { w: len, h: 2 }; 
         }
         if (t.includes('living') || t.includes('common')) return { w: 10, h: 8 };
         if (t.includes('master') || n.includes('master')) return { w: 8, h: 6 };

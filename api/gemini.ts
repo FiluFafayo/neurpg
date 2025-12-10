@@ -8,7 +8,7 @@ interface MapConfig {
   tone: 'Normal' | 'Sepia' | 'Night' | 'Toxic';
   width: number;
   height: number;
-  rooms: { id: string; name: string; type: string; connections: string[]; furniture: string[] }[];
+  rooms: { id: string; name: string; type: string; connections: string[]; furniture: string[]; width?: number; height?: number }[];
   description: string;
 }
 

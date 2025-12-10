@@ -87,7 +87,7 @@ export class MainScene extends Phaser.Scene {
     });
 
     // Add a rotating square to prove non-blocking behavior
-    const spinner = this.add.rectangle(width / 2, height / 2, 64, 64, 0x00ff00);
+    const spinner = this.add.rectangle(this.scale.width / 2, this.scale.height / 2, 64, 64, 0x00ff00);
     this.tweens.add({
         targets: spinner,
         angle: 360,

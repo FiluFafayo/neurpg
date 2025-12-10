@@ -226,7 +226,6 @@ export class StructuredGenerator implements IMapGenerator {
         
         for (const child of queue) {
             const possibleParents = [...placed].sort(() => Math.random() - 0.5);
-            let placedChild = false;
             for (const parent of possibleParents) {
                 const pos = this.findTightSnapPosition(parent, child, placed);
                 if (pos) {
@@ -234,7 +233,6 @@ export class StructuredGenerator implements IMapGenerator {
                     child.y = pos.y;
                     placed.push(child);
                     placedIds.add(child.room.id);
-                    placedChild = true;
                     break;
                 }
             }
@@ -369,14 +367,6 @@ export class StructuredGenerator implements IMapGenerator {
             // Pilih Y di perbatasan. Karena kita pakai internal walls (2 lapis), 
             // kita harus jebol DUA-DUANYA.
             
-            // Misal A di atas (y=0..5), B di bawah (y=5..10).
-            // A bottom=5. B top=5.
-            // Wall A ada di y=4. Wall B ada di y=5.
-            // Kita harus setDOOR di y=4 dan y=5.
-            
-            const wallAY = (rA.bottom === rB.y) ? rA.bottom - 1 : rA.y;
-            const wallBY = (rA.bottom === rB.y) ? rB.y : rB.bottom - 1;
-
             // Buka Pintu 2 Tile Lebar, menembus 2 layer Wall (Total 4 titik grid kalau wall tebal)
             // Tapi sederhananya: SetDoor di perbatasan
             const boundaryY = (rA.bottom === rB.y) ? rA.bottom : rA.y;

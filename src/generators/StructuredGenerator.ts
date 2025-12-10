@@ -108,7 +108,7 @@ export class StructuredGenerator implements IMapGenerator {
         });
 
         // 5. Walls & Doors
-        this.generateWalls(grid, roomGrid, config);
+        this.generateWalls(grid, config);
         this.generateDoors(placedRects, grid, mapData);
 
         // 6. Tiles & Furniture
@@ -340,7 +340,7 @@ export class StructuredGenerator implements IMapGenerator {
         return { w: 5, h: 5 };
     }
 
-    private generateWalls(grid: number[][], roomGrid: number[][], config: MapConfig) {
+    private generateWalls(grid: number[][], config: MapConfig) {
         for (let y = 0; y < config.height; y++) {
             for (let x = 0; x < config.width; x++) {
                 if (grid[y][x] === FLOOR) {

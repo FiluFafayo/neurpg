@@ -8,6 +8,8 @@ export interface RoomConfig {
   type: string; // 'kitchen', 'bedroom', etc.
   connections: string[]; // IDs of connected rooms
   furniture: string[]; // List of furniture to place
+  width?: number; // Optional override from AI
+  height?: number; // Optional override from AI
 }
 
 export interface MapConfig {

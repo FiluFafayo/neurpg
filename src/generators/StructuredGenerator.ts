@@ -20,13 +20,28 @@ class Rect {
     get centerX() { return this.x + Math.floor(this.w/2); }
     get centerY() { return this.y + Math.floor(this.h/2); }
 
-    // Cek apakah rect ini menabrak rect lain (dengan margin aman)
+    // Cek apakah rect ini menabrak rect lain (Zero Tolerance Policy)
     intersects(other: Rect, padding: number = 0): boolean {
+        // Padding positif = butuh jarak extra
+        // Padding 0 = bersentuhan diperbolehkan (untuk snap)
+        // Padding negatif = HARAM (overlap)
+        
+        // Gunakan integer math untuk memastikan presisi
+        const tLeft = Math.floor(this.left);
+        const tRight = Math.floor(this.right);
+        const tTop = Math.floor(this.top);
+        const tBottom = Math.floor(this.bottom);
+        
+        const oLeft = Math.floor(other.left);
+        const oRight = Math.floor(other.right);
+        const oTop = Math.floor(other.top);
+        const oBottom = Math.floor(other.bottom);
+
         return (
-            this.left < other.right + padding &&
-            this.right > other.left - padding &&
-            this.top < other.bottom + padding &&
-            this.bottom > other.top - padding
+            tLeft < oRight + padding &&
+            tRight > oLeft - padding &&
+            tTop < oBottom + padding &&
+            tBottom > oTop - padding
         );
     }
 }
@@ -50,8 +65,7 @@ export class StructuredGenerator implements IMapGenerator {
 
         // 2. Siapkan Rects
         const roomRects: Rect[] = config.rooms.map(room => {
-            const connCount = room.connections ? room.connections.length : 0;
-            const dim = this.getRoomDimensions(room.type, room.name, config.width, config.height, connCount);
+            const dim = this.getRoomDimensions(room, config.width, config.height);
             return new Rect(0, 0, dim.w, dim.h, room);
         });
 
@@ -102,10 +116,11 @@ export class StructuredGenerator implements IMapGenerator {
                         child.x = pos.x;
                         child.y = pos.y;
 
-                        // Cek Tabrakan
+                        // Cek Tabrakan (Strict)
                         let collision = false;
                         for (const existing of placedRooms) {
-                            if (child.intersects(existing, -1)) { // Negative padding = allow touching edges
+                            // Padding 0 = Boleh nempel dinding luar, tapi tidak boleh masuk ke dalam
+                            if (child.intersects(existing, 0)) { 
                                 collision = true; 
                                 break;
                             }
@@ -306,23 +321,26 @@ export class StructuredGenerator implements IMapGenerator {
         });
     }
 
-    private getRoomDimensions(type: string, name: string, _mapW: number, _mapH: number, connectionsCount: number = 2): { w: number, h: number } {
-        const t = type.toLowerCase();
-        const n = name.toLowerCase();
-        
-        if (t.includes('hall') || t.includes('corridor')) {
-             let len = Math.max(6, connectionsCount * 2); 
-             if (len > 15) len = 15;
-             return { w: len, h: 2 }; 
+    private getRoomDimensions(config: RoomConfig, _mapW: number, _mapH: number): { w: number, h: number } {
+        // 1. Prioritas Utama: Input dari AI (jika valid)
+        if (config.width && config.height && config.width > 0 && config.height > 0) {
+            return { w: Math.floor(config.width), h: Math.floor(config.height) };
         }
-        if (t.includes('living') || t.includes('common')) return { w: 10, h: 8 };
-        if (t.includes('master') || n.includes('master')) return { w: 8, h: 6 };
+
+        // 2. Fallback Logic (Jika AI lupa ngasih dimensi)
+        const t = config.type.toLowerCase();
+        
+        if (t.includes('hall') || t.includes('corridor') || t.includes('passage')) {
+             return { w: 8, h: 2 }; // Default corridor segment
+        }
+        if (t.includes('living') || t.includes('ballroom') || t.includes('hall')) return { w: 10, h: 8 };
+        if (t.includes('master')) return { w: 8, h: 6 };
         if (t.includes('kitchen') || t.includes('dining')) return { w: 6, h: 6 };
         if (t.includes('bed')) return { w: 5, h: 5 };
-        if (t.includes('bath') || t.includes('wc')) return { w: 3, h: 3 };
+        if (t.includes('bath') || t.includes('wc') || t.includes('toilet')) return { w: 3, h: 3 };
         if (t.includes('garage')) return { w: 8, h: 8 };
         
-        return { w: 5, h: 5 }; 
+        return { w: 6, h: 6 }; 
     }
 
     private isValid(x: number, y: number, grid: number[][]) {

@@ -63,24 +63,23 @@ export class MainScene extends Phaser.Scene {
         color: '#aaaaaa'
     });
 
-    // ... (Keep existing grid drawing)
-    // Draw a grid to verify Phaser is running
-    const graphics = this.add.graphics();
-    graphics.lineStyle(1, 0x00ff00, 0.3);
+    // Draw Debug Grid (Attached to Map Container so it moves/zooms with the map)
+    const gridGraphics = this.add.graphics();
+    gridGraphics.lineStyle(1, 0xff0000, 0.3);
     
-    // Draw 32x32 grid
-    const width = this.scale.width;
-    const height = this.scale.height;
-
-    for (let x = 0; x < width; x += 32) {
-      graphics.moveTo(x, 0);
-      graphics.lineTo(x, height);
+    // Draw massive grid (e.g., 100x100 tiles)
+    const gridSize = 100 * 32;
+    for (let x = 0; x <= gridSize; x += 32) {
+      gridGraphics.moveTo(x, 0);
+      gridGraphics.lineTo(x, gridSize);
     }
-    for (let y = 0; y < height; y += 32) {
-      graphics.moveTo(0, y);
-      graphics.lineTo(width, y);
+    for (let y = 0; y <= gridSize; y += 32) {
+      gridGraphics.moveTo(0, y);
+      gridGraphics.lineTo(gridSize, y);
     }
-    graphics.strokePath();
+    gridGraphics.strokePath();
+    this.mapContainer.add(gridGraphics); // Inject into container!
+    this.mapContainer.sendToBack(gridGraphics);
 
     this.add.text(16, 16, 'Phaser Initialized\nNeuro-Symbolic Engine Ready', {
       fontSize: '18px',

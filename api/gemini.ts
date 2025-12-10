@@ -49,11 +49,38 @@ class ServerlessGeminiDirector {
         "width": number,
         "height": number,
         "rooms": [
-          { "id": "r1", "name": "Foyer", "type": "entrance", "connections": ["r2"], "furniture": ["rug", "plant"] },
-          { "id": "r2", "name": "Hallway", "type": "corridor", "connections": ["r1", "r3"], "furniture": [] }
+          { 
+            "id": "r1", 
+            "name": "Foyer", 
+            "type": "entrance", 
+            "width": 8, 
+            "height": 6, 
+            "connections": ["r2"], 
+            "furniture": ["rug", "plant"] 
+          },
+          { 
+            "id": "r2", 
+            "name": "Main Hallway", 
+            "type": "corridor", 
+            "width": 20, 
+            "height": 2, 
+            "connections": ["r1", "r3"], 
+            "furniture": [] 
+          }
         ],
         "description": "Short summary of the map"
       }
+      
+      ARCHITECTURAL RULES (STRICT):
+      1. For 'structured' maps (Mansions, Schools, Offices): You MUST create a 'Spine' or 'Hub' layout. 
+         - Establish a central 'corridor' or 'hallway' early.
+         - Connect rooms to the corridor, NOT randomly to each other.
+         - Avoid cycles (A->B->C->A) unless it's a loop corridor.
+      2. 'width' and 'height' of rooms MUST be integers.
+         - Corridors: Long and thin (e.g., 15x2 or 2x15).
+         - Halls/Living Rooms: Large (e.g., 10x10).
+         - Bedrooms/Kitchens: Medium (e.g., 5x5 to 8x8).
+         - Bathrooms: Small (e.g., 3x3).
     `;
 
     let lastError: any = null;

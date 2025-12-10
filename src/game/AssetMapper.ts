@@ -12,6 +12,10 @@ export class AssetMapper {
 
         // --- Furniture & Objects (Fuzzy Match) ---
         if (k.includes('bed') || k.includes('cot') || k.includes('hammock')) return { texture: atlasKey, frame: 'bed' };
+        if (k.includes('shelf') || k.includes('book') || k.includes('cabinet') || k.includes('rack') || k.includes('wardrobe') || k.includes('pantry')) return { texture: atlasKey, frame: 'chest' }; // Fallback storage
+        if (k.includes('tv') || k.includes('monitor') || k.includes('screen')) return { texture: atlasKey, frame: 'chest' }; // Fallback tech
+        if (k.includes('couch') || k.includes('sofa') || k.includes('lounge')) return { texture: atlasKey, frame: 'chair' };
+        if (k.includes('stove') || k.includes('oven') || k.includes('sink') || k.includes('fridge') || k.includes('refrigerator')) return { texture: atlasKey, frame: 'table' }; // Kitchen stuff
         if (k.includes('table') || k.includes('desk') || k.includes('counter') || k.includes('bench')) return { texture: atlasKey, frame: 'table' };
         if (k.includes('chair') || k.includes('stool') || k.includes('seat') || k.includes('throne') || k.includes('sofa')) return { texture: atlasKey, frame: 'chair' };
         if (k.includes('chest') || k.includes('box') || k.includes('crate') || k.includes('trunk')) return { texture: atlasKey, frame: 'chest' };

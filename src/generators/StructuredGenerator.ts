@@ -10,14 +10,24 @@ const WALL = 2;
 const DOOR = 3;
 
 class Rect {
-    constructor(public x: number, public y: number, public w: number, public h: number, public room: RoomConfig) {}
+    public x: number;
+    public y: number;
+    public w: number;
+    public h: number;
+
+    constructor(x: number, y: number, w: number, h: number, public room: RoomConfig) {
+        // STRICT INTEGER ENFORCEMENT
+        this.x = Math.floor(x);
+        this.y = Math.floor(y);
+        this.w = Math.floor(w);
+        this.h = Math.floor(h);
+    }
     
     get left() { return this.x; }
     get right() { return this.x + this.w; }
     get top() { return this.y; }
     get bottom() { return this.y + this.h; }
     
-    // Titik pusat (Integer)
     get centerX() { return Math.floor(this.x + this.w/2); }
     get centerY() { return Math.floor(this.y + this.h/2); }
 
@@ -35,7 +45,7 @@ class Rect {
 export class StructuredGenerator implements IMapGenerator {
 
     generate(config: MapConfig): MapData {
-        console.log(`[StructuredGenerator] Analyzing Architecture Type...`);
+        console.log(`[StructuredGenerator] Phase 2: Physics & Strict Grid...`);
         
         const mapData: MapData = {
             width: config.width,
@@ -46,19 +56,16 @@ export class StructuredGenerator implements IMapGenerator {
 
         // 1. Init Grid
         const grid: number[][] = Array(config.height).fill(0).map(() => Array(config.width).fill(TERRAIN));
+        // roomGrid menyimpan ID ruangan (index array) di setiap sel untuk deteksi dinding internal
         const roomGrid: number[][] = Array(config.height).fill(0).map(() => Array(config.width).fill(-1));
 
-        // 2. Prepare Rects
+        // 2. Prepare Rects (Strict Integer)
         const allRects: Rect[] = config.rooms.map(room => {
             const dim = this.getRoomDimensions(room);
             return new Rect(0, 0, dim.w, dim.h, room);
         });
 
-        // 3. Smart Strategy Selector
-        // - Strategy A (Spine): Ada ruangan tipe "Corridor/Hallway"
-        // - Strategy B (Hub): Ada ruangan tipe "Living/Lobby/Foyer" yang koneksinya banyak (>2)
-        // - Strategy C (Cluster): Sisanya (Gubuk, Barak, Pos Jaga)
-        
+        // 3. Strategy Selector
         const spineRoom = allRects.find(r => 
             /corridor|hall|passage|gallery/i.test(r.room.type) || 
             /corridor|hall|passage/i.test(r.room.name)
@@ -108,7 +115,7 @@ export class StructuredGenerator implements IMapGenerator {
         });
 
         // 5. Walls & Doors
-        this.generateWalls(grid, config);
+        this.generateWalls(grid, roomGrid, config);
         this.generateDoors(placedRects, grid, mapData);
 
         // 6. Tiles & Furniture
@@ -120,8 +127,6 @@ export class StructuredGenerator implements IMapGenerator {
 
     // ================= STRATEGIES =================
 
-    // STRATEGY A: THE SPINE (Mansion, School, Hotel)
-    // Fokus: Koridor lurus, ruangan nempel di kiri/kanan/atas/bawah koridor.
     private buildSpineLayout(spine: Rect, allRects: Rect[], mapW: number, mapH: number): Rect[] {
         const placed: Rect[] = [];
         const placedIds = new Set<string>();
@@ -132,13 +137,8 @@ export class StructuredGenerator implements IMapGenerator {
         placed.push(spine);
         placedIds.add(spine.room.id);
 
-        // Determine Spine Axis (Horizontal vs Vertical)
         const isHorizontal = spine.w >= spine.h;
-        
-        // Children connected to Spine
         const children = allRects.filter(r => !placedIds.has(r.room.id) && spine.room.connections.includes(r.room.id));
-        
-        // Sort children by size for better packing
         children.sort((a, b) => b.w * b.h - a.w * a.h);
 
         let cursorTop = spine.x;
@@ -149,7 +149,6 @@ export class StructuredGenerator implements IMapGenerator {
         children.forEach((child, i) => {
             let px = 0, py = 0;
             if (isHorizontal) {
-                // Alternate Top/Bottom
                 if (i % 2 === 0) { // Top
                     px = cursorTop;
                     py = spine.y - child.h;
@@ -160,7 +159,6 @@ export class StructuredGenerator implements IMapGenerator {
                     cursorBottom += child.w;
                 }
             } else {
-                // Alternate Left/Right
                 if (i % 2 === 0) { // Left
                     px = spine.x - child.w;
                     py = cursorLeft;
@@ -172,8 +170,8 @@ export class StructuredGenerator implements IMapGenerator {
                 }
             }
             
-            child.x = px;
-            child.y = py;
+            child.x = Math.floor(px);
+            child.y = Math.floor(py);
             
             if (!this.checkCollision(child, placed)) {
                 placed.push(child);
@@ -181,18 +179,14 @@ export class StructuredGenerator implements IMapGenerator {
             }
         });
 
-        // Handle leftovers (Grandchildren)
         this.placeLeftovers(allRects, placed, placedIds);
         return placed;
     }
 
-    // STRATEGY B: THE HUB (Modern House, Apartment)
-    // Fokus: Ruang tengah besar (Living Room), ruangan lain nempel memutar.
     private buildHubLayout(hub: Rect, allRects: Rect[], mapW: number, mapH: number): Rect[] {
         const placed: Rect[] = [];
         const placedIds = new Set<string>();
 
-        // Center Hub
         hub.x = Math.floor((mapW - hub.w) / 2);
         hub.y = Math.floor((mapH - hub.h) / 2);
         placed.push(hub);
@@ -200,7 +194,6 @@ export class StructuredGenerator implements IMapGenerator {
 
         const children = allRects.filter(r => !placedIds.has(r.room.id) && hub.room.connections.includes(r.room.id));
         
-        // Place tightly around Hub
         for (const child of children) {
             const pos = this.findTightSnapPosition(hub, child, placed);
             if (pos) {
@@ -215,15 +208,12 @@ export class StructuredGenerator implements IMapGenerator {
         return placed;
     }
 
-    // STRATEGY C: THE CLUSTER (Cabin, Witch Hut, Barracks)
-    // Fokus: Organic Blob. Cari ruangan terbesar (sebagai anchor) tapi tempelnya serampangan/padat.
     private buildClusterLayout(allRects: Rect[], mapW: number, mapH: number): Rect[] {
         if (allRects.length === 0) return [];
 
         const placed: Rect[] = [];
         const placedIds = new Set<string>();
 
-        // 1. Pick Anchor (Largest Room usually)
         allRects.sort((a, b) => (b.w * b.h) - (a.w * a.h));
         const anchor = allRects[0];
         
@@ -232,17 +222,10 @@ export class StructuredGenerator implements IMapGenerator {
         placed.push(anchor);
         placedIds.add(anchor.room.id);
 
-        // 2. Linear/Blob Chain
-        // Berbeda dengan Hub yg radial, Cluster ini mencoba menempel ke ruangan TERAKHIR yg dipasang (Chain)
-        // atau ke ruangan mana saja yang dekat (Blob), menciptakan bentuk yang lebih tidak beraturan.
-        
         const queue = allRects.filter(r => !placedIds.has(r.room.id));
         
         for (const child of queue) {
-            // Coba tempel ke Anchor dulu, kalau penuh tempel ke yang lain (Blob growth)
-            // Kita acak target parent dari yang sudah placed untuk efek organik
             const possibleParents = [...placed].sort(() => Math.random() - 0.5);
-            
             let placedChild = false;
             for (const parent of possibleParents) {
                 const pos = this.findTightSnapPosition(parent, child, placed);
@@ -254,10 +237,6 @@ export class StructuredGenerator implements IMapGenerator {
                     placedChild = true;
                     break;
                 }
-            }
-            
-            if (!placedChild) {
-                console.warn(`[Cluster] Skipped orphaned room: ${child.room.name}`);
             }
         }
 
@@ -274,7 +253,6 @@ export class StructuredGenerator implements IMapGenerator {
             
             let progress = false;
             for (const child of unplaced) {
-                // Try to connect to valid parent
                 const parent = placed.find(p => child.room.connections.includes(p.room.id));
                 if (parent) {
                     const pos = this.findTightSnapPosition(parent, child, placed);
@@ -292,27 +270,20 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private findTightSnapPosition(parent: Rect, child: Rect, obstacles: Rect[]): {x: number, y: number} | null {
-        // Urutan prioritas posisi tempel:
-        // 1. Tengah Sisi (Centered)
-        // 2. Pojok Sisi (Corner alignment)
-        
         const candidates = [
-            // Centered Sides
             { x: parent.centerX - Math.floor(child.w/2), y: parent.y - child.h }, // Top
             { x: parent.centerX - Math.floor(child.w/2), y: parent.bottom },      // Bottom
             { x: parent.x - child.w, y: parent.centerY - Math.floor(child.h/2) }, // Left
             { x: parent.right, y: parent.centerY - Math.floor(child.h/2) },       // Right
-            
-            // Corner Alignments (Top-Left, Top-Right, etc)
-            { x: parent.x, y: parent.y - child.h }, // Top-Align Left
-            { x: parent.right - child.w, y: parent.y - child.h }, // Top-Align Right
-            { x: parent.x, y: parent.bottom }, // Bottom-Align Left
-            { x: parent.right - child.w, y: parent.bottom } // Bottom-Align Right
+            { x: parent.x, y: parent.y - child.h }, // Top-Left
+            { x: parent.right - child.w, y: parent.y - child.h }, // Top-Right
+            { x: parent.x, y: parent.bottom }, // Bottom-Left
+            { x: parent.right - child.w, y: parent.bottom } // Bottom-Right
         ];
 
         for (const pos of candidates) {
-            child.x = pos.x;
-            child.y = pos.y;
+            child.x = Math.floor(pos.x);
+            child.y = Math.floor(pos.y);
             if (!this.checkCollision(child, obstacles)) return pos;
         }
         return null;
@@ -321,14 +292,13 @@ export class StructuredGenerator implements IMapGenerator {
     private checkCollision(rect: Rect, others: Rect[]): boolean {
         for (const other of others) {
             if (rect.room.id === other.room.id) continue;
-            // Strict 0-padding intersection check
+            // Strict 0-padding: No overlap allowed.
             if (rect.intersects(other, 0)) return true;
         }
         return false;
     }
 
     private getRoomDimensions(config: RoomConfig): { w: number, h: number } {
-        // Priority: AI Config
         if (config.width && config.height) return { w: Math.floor(config.width), h: Math.floor(config.height) };
         
         const t = config.type.toLowerCase();
@@ -340,18 +310,37 @@ export class StructuredGenerator implements IMapGenerator {
         return { w: 5, h: 5 };
     }
 
-    private generateWalls(grid: number[][], config: MapConfig) {
+    // INTERNAL WALLS & DOORS LOGIC
+    private generateWalls(grid: number[][], roomGrid: number[][], config: MapConfig) {
         for (let y = 0; y < config.height; y++) {
             for (let x = 0; x < config.width; x++) {
                 if (grid[y][x] === FLOOR) {
+                    const currentRoom = roomGrid[y][x];
                     const dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+                    
                     for (const [dx, dy] of dirs) {
                         const nx = x + dx;
                         const ny = y + dy;
+                        
+                        // Border Map Check
                         if (nx < 0 || ny < 0 || nx >= config.width || ny >= config.height) continue;
                         
-                        // Wall jika tetangga adalah Terrain (Void)
-                        if (grid[ny][nx] === TERRAIN) grid[y][x] = WALL;
+                        const neighborVal = grid[ny][nx];
+                        const neighborRoom = roomGrid[ny][nx];
+
+                        // Wall Condition 1: Edge of Void (Terrain)
+                        if (neighborVal === TERRAIN) {
+                            grid[y][x] = WALL;
+                        }
+                        // Wall Condition 2: Internal Rooms Separation
+                        // Jika tetangga adalah Floor TAPI beda Room ID, buat dinding.
+                        else if (neighborVal === FLOOR && neighborRoom !== -1 && neighborRoom !== currentRoom) {
+                            // Agar tidak double-wall, kita prioritaskan arah tertentu (misal Top/Left)
+                            // ATAU, jadikan WALL dua-duanya agar tebal?
+                            // Untuk amannya di grid kecil, kita convert sisi "ini" jadi wall.
+                            // Hasilnya tembok 2 lapis (satu milik A, satu milik B).
+                            grid[y][x] = WALL;
+                        }
                     }
                 }
             }
@@ -368,35 +357,61 @@ export class StructuredGenerator implements IMapGenerator {
     }
 
     private carveDoor(rA: Rect, rB: Rect, grid: number[][], mapData: MapData) {
-        // Find Overlap Range
+        // Find Overlap Range (Strict Touching)
         const intersectX_Start = Math.max(rA.x, rB.x);
         const intersectX_End = Math.min(rA.right, rB.right);
         const intersectY_Start = Math.max(rA.y, rB.y);
         const intersectY_End = Math.min(rA.bottom, rB.bottom);
 
-        // Logic: Pintu dibuat di tengah area yang bersentuhan
-        // Vertical touch (Atas/Bawah)
+        // Vertical Connection (Atas/Bawah)
         if (intersectX_End - intersectX_Start >= 2 && (rA.bottom === rB.y || rA.y === rB.bottom)) {
-            const dx = Math.floor((intersectX_Start + intersectX_End) / 2) - 1; // Center - 1
-            const dy = (rA.bottom === rB.y) ? rA.bottom - 1 : rA.y; // The wall line
+            const dx = Math.floor((intersectX_Start + intersectX_End) / 2) - 1;
+            // Pilih Y di perbatasan. Karena kita pakai internal walls (2 lapis), 
+            // kita harus jebol DUA-DUANYA.
             
-            // Buka 2 tile (Door & Door+1)
-            this.setDoor(dx, dy, grid);
-            this.setDoor(dx+1, dy, grid);
+            // Misal A di atas (y=0..5), B di bawah (y=5..10).
+            // A bottom=5. B top=5.
+            // Wall A ada di y=4. Wall B ada di y=5.
+            // Kita harus setDOOR di y=4 dan y=5.
             
-            // Metadata
-            this.addDoorMeta(mapData, rA.room.id, dx, dy);
+            const wallAY = (rA.bottom === rB.y) ? rA.bottom - 1 : rA.y;
+            const wallBY = (rA.bottom === rB.y) ? rB.y : rB.bottom - 1;
+
+            // Buka Pintu 2 Tile Lebar, menembus 2 layer Wall (Total 4 titik grid kalau wall tebal)
+            // Tapi sederhananya: SetDoor di perbatasan
+            const boundaryY = (rA.bottom === rB.y) ? rA.bottom : rA.y;
+            
+            // Kita jebol boundaryY dan boundaryY-1 untuk aman
+            this.setDoor(dx, boundaryY, grid);
+            this.setDoor(dx, boundaryY-1, grid);
+            this.setDoor(dx+1, boundaryY, grid);
+            this.setDoor(dx+1, boundaryY-1, grid);
+
+            // Metadata: Register KEDUA tile pintu agar tidak diblokir furnitur
+            // Gunakan salah satu Y yang valid sebagai "Center Door"
+            this.addDoorMeta(mapData, rA.room.id, dx, boundaryY-1);
+            this.addDoorMeta(mapData, rA.room.id, dx+1, boundaryY-1);
+            
+            this.addDoorMeta(mapData, rB.room.id, dx, boundaryY);
+            this.addDoorMeta(mapData, rB.room.id, dx+1, boundaryY);
         }
         
-        // Horizontal touch (Kiri/Kanan)
+        // Horizontal Connection (Kiri/Kanan)
         if (intersectY_End - intersectY_Start >= 2 && (rA.right === rB.x || rA.x === rB.right)) {
             const dy = Math.floor((intersectY_Start + intersectY_End) / 2) - 1;
-            const dx = (rA.right === rB.x) ? rA.right - 1 : rA.x;
-            
-            this.setDoor(dx, dy, grid);
-            this.setDoor(dx, dy+1, grid);
+            const boundaryX = (rA.right === rB.x) ? rA.right : rA.x;
 
-            this.addDoorMeta(mapData, rA.room.id, dx, dy);
+            // Jebol X dan X-1
+            this.setDoor(boundaryX, dy, grid);
+            this.setDoor(boundaryX-1, dy, grid);
+            this.setDoor(boundaryX, dy+1, grid);
+            this.setDoor(boundaryX-1, dy+1, grid);
+
+            this.addDoorMeta(mapData, rA.room.id, boundaryX-1, dy);
+            this.addDoorMeta(mapData, rA.room.id, boundaryX-1, dy+1);
+
+            this.addDoorMeta(mapData, rB.room.id, boundaryX, dy);
+            this.addDoorMeta(mapData, rB.room.id, boundaryX, dy+1);
         }
     }
 
@@ -410,7 +425,10 @@ export class StructuredGenerator implements IMapGenerator {
         const r = mapData.rooms.find(rm => rm.id === roomId);
         if (r) {
             if(!r.doors) r.doors = [];
-            r.doors.push({x, y});
+            // Cek duplikat biar rapi
+            if (!r.doors.some(d => d.x === x && d.y === y)) {
+                r.doors.push({x, y});
+            }
         }
     }
 
@@ -420,17 +438,22 @@ export class StructuredGenerator implements IMapGenerator {
                 const val = grid[y][x];
                 const rIdx = roomGrid[y][x];
                 
-                // Base
                 mapData.tiles.push({ x, y, sprite: 'grass', layer: 'floor' });
 
                 if (val === WALL) {
                     mapData.tiles.push({ x, y, sprite: 'wall_brick', layer: 'wall' });
-                } else if (val === FLOOR || val === DOOR) {
+                } 
+                else if (val === FLOOR || val === DOOR) {
                     let sprite = 'floor_common';
-                    if (rIdx !== -1) {
+                    if (rIdx !== -1 && config.rooms[rIdx]) {
                         sprite = this.getFloorSprite(config.rooms[rIdx].type);
                     }
                     mapData.tiles.push({ x, y, sprite, layer: 'floor' });
+                    
+                    if (val === DOOR) {
+                        // VISUAL DOOR FIX: Render pintu di layer furniture
+                        mapData.tiles.push({ x, y, sprite: 'door_wood', layer: 'furniture' });
+                    }
                 }
             }
         }

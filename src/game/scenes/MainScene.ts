@@ -240,14 +240,16 @@ export class MainScene extends Phaser.Scene {
     const worldPoint = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
     
     // Fat Finger Logic (Radius Search)
-    const SEARCH_RADIUS = 40; 
+    // Scale radius by zoom level so "40px on screen" is consistent regardless of zoom
+    const SCREEN_HIT_RADIUS = 40; 
+    const effectiveRadius = SCREEN_HIT_RADIUS / this.cameras.main.zoom;
     
     // Adjust for container position
     const localX = worldPoint.x - this.mapContainer.x;
     const localY = worldPoint.y - this.mapContainer.y;
 
     let closestChild: any = null;
-    let closestDist = SEARCH_RADIUS;
+    let closestDist = effectiveRadius;
 
     this.mapContainer.list.forEach((child: any) => {
         // Only consider Sprites (ignore Debug Rects/Text)
@@ -262,8 +264,10 @@ export class MainScene extends Phaser.Scene {
     });
 
     if (closestChild && closestChild.texture) {
-        console.log(`[Interaction] Tapped ${closestChild.texture.key}`);
-        // Feedback
+        // Debug info on interaction
+        console.log(`[Interaction] Tapped: ${closestChild.texture.key} | Frame: ${closestChild.frame.name}`);
+        
+        // Visual Feedback (Juice)
         this.tweens.add({
             targets: closestChild,
             scaleX: 1.2, scaleY: 1.2,

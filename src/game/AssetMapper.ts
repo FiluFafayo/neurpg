@@ -6,65 +6,56 @@ export interface SpriteConfig {
 
 export class AssetMapper {
     static getSpriteConfig(key: string): SpriteConfig {
-        // Base texture key (assuming we use 'main_atlas' for everything)
+        // Base texture key
         const atlasKey = 'main_atlas';
         const k = key.toLowerCase();
 
-        // --- Furniture & Objects (Fuzzy Match) ---
-        if (k.includes('bed') || k.includes('cot') || k.includes('hammock')) return { texture: atlasKey, frame: 'bed' };
-        if (k.includes('shelf') || k.includes('book') || k.includes('cabinet') || k.includes('rack') || k.includes('wardrobe') || k.includes('pantry')) return { texture: atlasKey, frame: 'chest' }; // Fallback storage
-        if (k.includes('tv') || k.includes('monitor') || k.includes('screen')) return { texture: atlasKey, frame: 'chest' }; // Fallback tech
-        if (k.includes('couch') || k.includes('sofa') || k.includes('lounge')) return { texture: atlasKey, frame: 'chair' };
-        if (k.includes('stove') || k.includes('oven') || k.includes('sink') || k.includes('fridge') || k.includes('refrigerator')) return { texture: atlasKey, frame: 'table' }; // Kitchen stuff
-        if (k.includes('table') || k.includes('desk') || k.includes('counter') || k.includes('bench')) return { texture: atlasKey, frame: 'table' };
-        if (k.includes('chair') || k.includes('stool') || k.includes('seat') || k.includes('throne') || k.includes('sofa')) return { texture: atlasKey, frame: 'chair' };
-        if (k.includes('chest') || k.includes('box') || k.includes('crate') || k.includes('trunk')) return { texture: atlasKey, frame: 'chest' };
-        
-        // --- Nature ---
-        if (k.includes('tree') || k.includes('bush') || k.includes('shrub') || k.includes('plant')) return { texture: atlasKey, frame: 'tree' };
-        if (k.includes('grass') || k.includes('lawn') || k.includes('field')) return { texture: atlasKey, frame: 'grass' };
-        if (k.includes('water') || k.includes('lake') || k.includes('pond') || k.includes('river')) return { texture: atlasKey, frame: 'water' };
-        if (k.includes('sand') || k.includes('beach') || k.includes('desert')) return { texture: atlasKey, frame: 'sand' };
+        // 1. FLOORS (High Priority: Check prefixes first)
+        // Mencegah "floor_bedroom" terdeteksi sebagai "bed"
+        if (k.includes('floor')) {
+            if (k.includes('kitchen') || k.includes('dining')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xffddaa }; // Warm
+            if (k.includes('bedroom') || k.includes('master')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xaaddff }; // Cool
+            if (k.includes('bathroom') || k.includes('toilet') || k.includes('wc')) return { texture: atlasKey, frame: 'floor_stone', tint: 0xeeeeff }; // Clean
+            if (k.includes('hall') || k.includes('corridor') || k.includes('passage')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x888888 }; // Darker
+            if (k.includes('storage') || k.includes('pantry') || k.includes('crypt')) return { texture: atlasKey, frame: 'floor_wood', tint: 0x8B4513 }; // Dark Brown
+            if (k.includes('exterior') || k.includes('garage') || k.includes('terrace')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x999999 }; // Pavement
+            if (k.includes('entrance') || k.includes('foyer') || k.includes('lobby')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xccaa88 }; // Welcoming
+            if (k.includes('living') || k.includes('common') || k.includes('library') || k.includes('ballroom')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xffeebb };
+            
+            // Generic Floors Fallback
+            if (k.includes('wood')) return { texture: atlasKey, frame: 'floor_wood' };
+            if (k.includes('stone') || k.includes('rock')) return { texture: atlasKey, frame: 'floor_stone' };
+            return { texture: atlasKey, frame: 'floor_common' }; 
+        }
 
-        // --- Semantic Floors ---
-        // Specific Room Types (from StructuredGenerator)
-        if (k.includes('floor_kitchen') || k.includes('floor_dining')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xffddaa }; // Warm wood
-        if (k.includes('floor_bedroom')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xaaddff }; // Cool wood
-        if (k.includes('floor_bathroom') || k.includes('floor_toilet')) return { texture: atlasKey, frame: 'floor_stone', tint: 0xeeeeff }; // Clean stone
-        if (k.includes('floor_hallway') || k.includes('floor_corridor')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x888888 }; // Dark Grey
-        if (k.includes('floor_storage') || k.includes('floor_pantry')) return { texture: atlasKey, frame: 'floor_wood', tint: 0x8B4513 }; // Dark Brown
-        
-        // --- Fase 1: Fix Missing Keys ---
-        if (k.includes('floor_exterior') || k.includes('carport') || k.includes('terrace')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x999999 }; // Pavement Grey
-        if (k.includes('floor_entrance') || k.includes('foyer')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xccaa88 }; // Welcoming Wood
-        if (k.includes('floor_common') || k.includes('living')) return { texture: atlasKey, frame: 'floor_wood', tint: 0xffeebb }; // Cozy Warm
-        if (k.includes('floor_utility') || k.includes('laundry')) return { texture: atlasKey, frame: 'floor_stone', tint: 0xcccccc }; // Cool Stone
-
-        // Generic Floors
-        if (k.includes('floor_wood') || k.includes('wood_floor')) return { texture: atlasKey, frame: 'floor_wood' };
-        if (k.includes('floor_stone') || k.includes('stone_floor')) return { texture: atlasKey, frame: 'floor_stone' };
-        
-        // Fallbacks for Decor
-        if (k.includes('rug') || k.includes('carpet')) return { texture: atlasKey, frame: 'floor_wood', tint: 0x992222 }; // Reddish tint
-        if (k.includes('stair') || k.includes('ladder')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x555555 }; // Dark tint
-
-        // --- Semantic Walls ---
+        // 2. WALLS
         if (k.includes('wall')) {
             if (k.includes('kitchen')) return { texture: atlasKey, frame: 'wall_brick', tint: 0xffcccc };
             if (k.includes('bedroom')) return { texture: atlasKey, frame: 'wall_stone', tint: 0xeeddbb };
             if (k.includes('bathroom')) return { texture: atlasKey, frame: 'wall_stone', tint: 0xaaffaa };
-            if (k.includes('stone')) return { texture: atlasKey, frame: 'wall_stone' };
-            return { texture: atlasKey, frame: 'wall_brick' }; // Default
+            if (k.includes('crypt') || k.includes('dungeon')) return { texture: atlasKey, frame: 'wall_stone', tint: 0x555555 };
+            return { texture: atlasKey, frame: 'wall_brick' };
         }
 
-        // --- Exact Frame Match (Final Check) ---
-        // This catches things like 'door_wood' if not caught above
-        if (k === 'door_wood') return { texture: atlasKey, frame: 'door_wood' };
-        if (k === 'floor_wood') return { texture: atlasKey, frame: 'floor_wood' };
-        if (k === 'floor_stone') return { texture: atlasKey, frame: 'floor_stone' };
+        // 3. DOORS
+        if (k.includes('door')) return { texture: atlasKey, frame: 'door_wood' };
 
-        // --- Default Fallback ---
-        console.warn(`AssetMapper: Unknown key '${key}', using fallback.`);
-        return { texture: atlasKey, frame: 'floor_wood', tint: 0xff00ff }; // Magenta Error
+        // 4. FURNITURE & OBJECTS (Specific Names)
+        if (k === 'bed' || k.includes('bunk') || k.includes('cot') || k.includes('poster bed')) return { texture: atlasKey, frame: 'bed' };
+        if (k.includes('chair') || k.includes('sofa') || k.includes('throne') || k.includes('stool') || k.includes('seat')) return { texture: atlasKey, frame: 'chair' };
+        if (k.includes('table') || k.includes('desk') || k.includes('counter') || k.includes('bench') || k.includes('sink') || k.includes('stove') || k.includes('piano')) return { texture: atlasKey, frame: 'table' };
+        if (k.includes('chest') || k.includes('box') || k.includes('crate') || k.includes('shelf') || k.includes('book') || k.includes('cabinet') || k.includes('wardrobe')) return { texture: atlasKey, frame: 'chest' };
+        if (k.includes('rug') || k.includes('carpet')) return { texture: atlasKey, frame: 'floor_wood', tint: 0x992222 };
+        if (k.includes('stair') || k.includes('ladder')) return { texture: atlasKey, frame: 'floor_stone', tint: 0x555555 };
+
+        // 5. NATURE
+        if (k.includes('tree') || k.includes('plant') || k.includes('bush')) return { texture: atlasKey, frame: 'tree' };
+        if (k.includes('water') || k.includes('pond') || k.includes('river') || k.includes('pool')) return { texture: atlasKey, frame: 'water' };
+        if (k.includes('sand') || k.includes('desert')) return { texture: atlasKey, frame: 'sand' };
+        if (k.includes('grass') || k.includes('lawn')) return { texture: atlasKey, frame: 'grass' };
+
+        // Fallback
+        // console.warn(`AssetMapper: Unknown key '${key}', using fallback.`);
+        return { texture: atlasKey, frame: 'chest', tint: 0xff00ff }; // Magenta Error Box
     }
 }
